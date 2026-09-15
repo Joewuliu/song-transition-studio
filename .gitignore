@@ -1,0 +1,13 @@
+# Claude Code local configuration
+CLAUDE.md
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Environment
+.env
+.env.local
+.env.*.local
