@@ -1,6 +1,7 @@
 "use client";
 
 import { useWaveSurfer } from "@/hooks/useWaveSurfer";
+import { useTrackAnalysis } from "@/hooks/useTrackAnalysis";
 import { formatDuration } from "@/lib/audio";
 import { PauseIcon, PlayIcon } from "@/components/icons";
 
@@ -21,6 +22,7 @@ export function LoadedTrack({
 }: LoadedTrackProps) {
   const { containerRef, isReady, isPlaying, duration, error, togglePlay } =
     useWaveSurfer({ file, waveColor, progressColor });
+  const { state: analysisState, analyze } = useTrackAnalysis(file);
 
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -70,6 +72,33 @@ export function LoadedTrack({
       </div>
 
       {error && <p className="text-xs text-red-500">{error}</p>}
+
+      <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+        {analysisState.status === "success" ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+            <span>{analysisState.result.tempoBpm.toFixed(1)} BPM</span>
+            <span>{analysisState.result.beatCount} beats</span>
+            <span>
+              {formatDuration(analysisState.result.durationSeconds)} analyzed
+            </span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={analyze}
+            disabled={analysisState.status === "analyzing"}
+            className="self-start rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:border-zinc-400 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            {analysisState.status === "analyzing"
+              ? "Analyzing…"
+              : "Analyze track"}
+          </button>
+        )}
+
+        {analysisState.status === "error" && (
+          <p className="text-xs text-red-500">{analysisState.message}</p>
+        )}
+      </div>
     </div>
   );
 }
