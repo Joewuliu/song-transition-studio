@@ -7,6 +7,8 @@ interface UseWaveSurferOptions {
   file: File;
   waveColor: string;
   progressColor: string;
+  /** Called with the clicked/dragged-to time whenever the user seeks. */
+  onSeek?: (timeSeconds: number) => void;
 }
 
 interface UseWaveSurferResult {
@@ -32,6 +34,7 @@ export function useWaveSurfer({
   file,
   waveColor,
   progressColor,
+  onSeek,
 }: UseWaveSurferOptions): UseWaveSurferResult {
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
@@ -39,6 +42,14 @@ export function useWaveSurfer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  // Kept in a ref (rather than a WaveSurfer-effect dependency) so a new
+  // `onSeek` reference from the caller never tears down and recreates the
+  // WaveSurfer instance — only the callback's *target* changes.
+  const onSeekRef = useRef(onSeek);
+  useEffect(() => {
+    onSeekRef.current = onSeek;
+  }, [onSeek]);
 
   useEffect(() => {
     if (!container) return;
@@ -70,12 +81,16 @@ export function useWaveSurfer({
       setError("This file couldn't be loaded as audio.");
       setIsReady(false);
     };
+    const handleInteraction = (newTime: number) => {
+      onSeekRef.current?.(newTime);
+    };
 
     wavesurfer.on("ready", handleReady);
     wavesurfer.on("play", handlePlay);
     wavesurfer.on("pause", handlePause);
     wavesurfer.on("finish", handleFinish);
     wavesurfer.on("error", handleError);
+    wavesurfer.on("interaction", handleInteraction);
 
     return () => {
       wavesurfer.unAll();

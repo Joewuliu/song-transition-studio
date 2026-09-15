@@ -9,6 +9,11 @@ export type TrackAnalysisState =
   | { status: "success"; result: TrackAnalysis }
   | { status: "error"; message: string };
 
+interface UseTrackAnalysisOptions {
+  /** Called after a successful (re-)analysis, e.g. to revalidate a beat anchor. */
+  onSuccess?: (result: TrackAnalysis) => void;
+}
+
 interface UseTrackAnalysisResult {
   state: TrackAnalysisState;
   analyze: () => void;
@@ -19,7 +24,10 @@ interface UseTrackAnalysisResult {
  * (the same key used for useWaveSurfer) so replacing or removing a track
  * discards its analysis for free, instead of needing a manual reset.
  */
-export function useTrackAnalysis(file: File): UseTrackAnalysisResult {
+export function useTrackAnalysis(
+  file: File,
+  { onSuccess }: UseTrackAnalysisOptions = {},
+): UseTrackAnalysisResult {
   const [state, setState] = useState<TrackAnalysisState>({ status: "idle" });
 
   const analyze = useCallback(() => {
@@ -28,13 +36,16 @@ export function useTrackAnalysis(file: File): UseTrackAnalysisResult {
     setState({ status: "analyzing" });
 
     void analyzeTrack(file).then(
-      (result) => setState({ status: "success", result }),
+      (result) => {
+        setState({ status: "success", result });
+        onSuccess?.(result);
+      },
       (error: unknown) => {
         const message = error instanceof Error ? error.message : "Analysis failed.";
         setState({ status: "error", message });
       },
     );
-  }, [file, state.status]);
+  }, [file, state.status, onSuccess]);
 
   return { state, analyze };
 }

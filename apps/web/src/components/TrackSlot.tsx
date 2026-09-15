@@ -10,38 +10,29 @@ import {
 import { LoadedTrack } from "@/components/LoadedTrack";
 import { UploadIcon } from "@/components/icons";
 import { isSupportedAudioFile } from "@/lib/audio";
+import { ACCENT_STYLES, type TrackAccent } from "@/lib/trackAccent";
+import type { BeatAnchor } from "@/lib/transitionPlan";
 
-export type TrackAccent = "violet" | "teal";
+export type { TrackAccent };
 
 interface TrackSlotProps {
   label: string;
   accent: TrackAccent;
+  anchor: BeatAnchor | null;
+  onAnchorChange: (anchor: BeatAnchor | null) => void;
 }
-
-const ACCENT_STYLES: Record<
-  TrackAccent,
-  { chip: string; wave: string; progress: string; ring: string }
-> = {
-  violet: {
-    chip: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-    wave: "#c4b5fd",
-    progress: "#7c3aed",
-    ring: "ring-violet-400",
-  },
-  teal: {
-    chip: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-    wave: "#5eead4",
-    progress: "#0d9488",
-    ring: "ring-teal-400",
-  },
-};
 
 interface Selection {
   id: number;
   file: File;
 }
 
-export function TrackSlot({ label, accent }: TrackSlotProps) {
+export function TrackSlot({
+  label,
+  accent,
+  anchor,
+  onAnchorChange,
+}: TrackSlotProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -54,15 +45,19 @@ export function TrackSlot({ label, accent }: TrackSlotProps) {
   // TrackSlot only tracks *which* file is selected. The object URL itself
   // is created and revoked entirely inside useWaveSurfer's effect, right
   // where it's consumed, so it never needs to exist as React state here.
-  const applyFile = useCallback((candidate: File) => {
-    if (!isSupportedAudioFile(candidate)) {
-      setFileError(`"${candidate.name}" isn't a supported audio file.`);
-      return;
-    }
-    setFileError(null);
-    nextSelectionId.current += 1;
-    setSelection({ id: nextSelectionId.current, file: candidate });
-  }, []);
+  const applyFile = useCallback(
+    (candidate: File) => {
+      if (!isSupportedAudioFile(candidate)) {
+        setFileError(`"${candidate.name}" isn't a supported audio file.`);
+        return;
+      }
+      setFileError(null);
+      nextSelectionId.current += 1;
+      setSelection({ id: nextSelectionId.current, file: candidate });
+      onAnchorChange(null);
+    },
+    [onAnchorChange],
+  );
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     const candidate = event.target.files?.[0];
@@ -100,6 +95,7 @@ export function TrackSlot({ label, accent }: TrackSlotProps) {
   const handleRemove = () => {
     setSelection(null);
     setFileError(null);
+    onAnchorChange(null);
   };
 
   const openFileDialog = () => inputRef.current?.click();
@@ -146,6 +142,8 @@ export function TrackSlot({ label, accent }: TrackSlotProps) {
             file={selection.file}
             waveColor={styles.wave}
             progressColor={styles.progress}
+            anchor={anchor}
+            onAnchorChange={onAnchorChange}
             onReplace={openFileDialog}
             onRemove={handleRemove}
           />
