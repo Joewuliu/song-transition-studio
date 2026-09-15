@@ -1,17 +1,26 @@
 import { BackendStatus } from "@/components/BackendStatus";
+import { TrackSlot } from "@/components/TrackSlot";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-center gap-6 py-32 px-16 text-center">
-        <h1 className="text-4xl font-semibold tracking-tight text-black dark:text-zinc-50">
-          Song Transition Studio
-        </h1>
-        <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-          Automatically create smooth DJ-style transitions between two songs,
-          then fine-tune them by hand.
-        </p>
-        <BackendStatus />
+    <div className="flex flex-1 flex-col bg-white dark:bg-black">
+      <header className="flex items-start justify-between gap-4 px-8 py-8 sm:px-12">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            Song Transition Studio
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Load two tracks to start building a transition.
+          </p>
+        </div>
+        <div className="origin-top-right scale-90 opacity-60">
+          <BackendStatus />
+        </div>
+      </header>
+
+      <main className="flex flex-1 flex-col gap-12 px-8 pb-20 sm:px-12">
+        <TrackSlot label="Song A" accent="violet" />
+        <TrackSlot label="Song B" accent="teal" />
       </main>
     </div>
   );
