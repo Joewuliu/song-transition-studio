@@ -302,3 +302,127 @@ def _rms_to_db(rms: float, floor: float = 1e-6) -> float:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return min(max(value, low), high)
+
+
+# --- Transition variants (M9) ---------------------------------------------
+# suggest_transition_plan(...) -> one base TransitionSuggestionResult
+#         -> build_transition_variants(base) -> [Smooth Blend, Bass Swap,
+#            Quick Mix]
+#
+# Every variant reuses the SAME anchors, tempo interpretation, and starting
+# gains as the base suggestion — only presentation (transition length,
+# style, bass-swap window) differs. The point is to let the user compare
+# transition *technique* on the same musical material, not different parts
+# of either song, so nothing here re-runs candidate selection.
+
+# Deterministic policy: the bass-swap width is always one quarter of the
+# transition length. Since transition_beats is always one of {8, 16, 32}
+# (the render request's supported lengths), this always lands exactly on
+# one of the three valid BassSwapWidthBeats values {2, 4, 8} — no
+# clamping or rounding ever needed, and the resulting half-width (see
+# transition_renderer._valid_bass_swap_range) is always exactly 0.125,
+# comfortably inside the valid range for bass_swap_position = 0.5.
+BASS_SWAP_WIDTH_BY_TRANSITION_BEATS: dict[int, int] = {8: 2, 16: 4, 32: 8}
+
+# Deterministic policy: one step shorter on the supported {8, 16, 32}
+# transition-length ladder. 8 is already the shortest supported length, so
+# it maps to itself rather than to something invalid.
+QUICK_MIX_LENGTH_BY_BASE_LENGTH: dict[int, int] = {32: 16, 16: 8, 8: 8}
+
+SMOOTH_BLEND_NAME = "Smooth Blend"
+SMOOTH_BLEND_DESCRIPTION = "Gradual full-spectrum blend."
+BASS_SWAP_VARIANT_NAME = "Bass Swap"
+BASS_SWAP_VARIANT_DESCRIPTION = "Gradual blend with a tighter low-end handoff."
+QUICK_MIX_NAME = "Quick Mix"
+QUICK_MIX_DESCRIPTION = "Shorter transition with a faster handoff."
+
+
+@dataclass(frozen=True)
+class TransitionVariantPlan:
+    """The same editable-plan fields as TransitionSuggestionResult, scoped
+    to one specific derived variant. Anchors/tempo/gains are always copied
+    from the base suggestion verbatim — never independently re-chosen."""
+
+    song_a_anchor: AnchorChoice
+    song_b_anchor: AnchorChoice
+    transition_beats: int
+    song_a_gain_db: float
+    song_b_gain_db: float
+    crossfade_bias: float
+    song_b_tempo_multiplier: float
+    transition_style: str
+    bass_swap_position: float
+    bass_swap_width_beats: int
+
+
+@dataclass(frozen=True)
+class TransitionVariant:
+    id: str
+    name: str
+    description: str
+    plan: TransitionVariantPlan
+
+
+def build_transition_variants(
+    result: TransitionSuggestionResult,
+) -> list[TransitionVariant]:
+    """Derives the three M9 presentation options from one already-chosen
+    base suggestion. Deterministic: the same `result` always produces the
+    same three variants, in the same order."""
+    smooth = TransitionVariant(
+        id="smooth",
+        name=SMOOTH_BLEND_NAME,
+        description=SMOOTH_BLEND_DESCRIPTION,
+        plan=_variant_plan(result, transition_style="smooth"),
+    )
+
+    bass_swap_width = BASS_SWAP_WIDTH_BY_TRANSITION_BEATS[result.transition_beats]
+    bass_swap = TransitionVariant(
+        id="bass_swap",
+        name=BASS_SWAP_VARIANT_NAME,
+        description=BASS_SWAP_VARIANT_DESCRIPTION,
+        plan=_variant_plan(
+            result,
+            transition_style="bass_swap",
+            bass_swap_position=0.5,
+            bass_swap_width_beats=bass_swap_width,
+        ),
+    )
+
+    quick_length = QUICK_MIX_LENGTH_BY_BASE_LENGTH[result.transition_beats]
+    quick = TransitionVariant(
+        id="quick",
+        name=QUICK_MIX_NAME,
+        description=QUICK_MIX_DESCRIPTION,
+        plan=_variant_plan(
+            result, transition_beats=quick_length, transition_style="smooth"
+        ),
+    )
+
+    return [smooth, bass_swap, quick]
+
+
+def _variant_plan(
+    result: TransitionSuggestionResult,
+    *,
+    transition_beats: int | None = None,
+    transition_style: str = "smooth",
+    bass_swap_position: float = 0.5,
+    bass_swap_width_beats: int = 4,
+) -> TransitionVariantPlan:
+    return TransitionVariantPlan(
+        song_a_anchor=result.song_a_anchor,
+        song_b_anchor=result.song_b_anchor,
+        transition_beats=(
+            transition_beats
+            if transition_beats is not None
+            else result.transition_beats
+        ),
+        song_a_gain_db=result.song_a_gain_db,
+        song_b_gain_db=result.song_b_gain_db,
+        crossfade_bias=result.crossfade_bias,
+        song_b_tempo_multiplier=result.song_b_tempo_multiplier,
+        transition_style=transition_style,
+        bass_swap_position=bass_swap_position,
+        bass_swap_width_beats=bass_swap_width_beats,
+    )

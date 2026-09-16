@@ -123,7 +123,8 @@ class SuggestedAnchor(BaseModel):
 
 class TransitionSuggestion(BaseModel):
     """Shaped to drop directly into the frontend's TransitionPlan — the
-    manual editor and the suggestion flow share one plan representation."""
+    manual editor and the suggestion flow share one plan representation.
+    Also reused, unmodified, as each TransitionVariant's `plan` below."""
 
     song_a_anchor: SuggestedAnchor
     song_b_anchor: SuggestedAnchor
@@ -132,6 +133,21 @@ class TransitionSuggestion(BaseModel):
     song_b_gain_db: float
     crossfade_bias: float
     song_b_tempo_multiplier: Literal[0.5, 1.0, 2.0]
+    transition_style: TransitionStyle = "smooth"
+    bass_swap_position: float = Field(default=0.5, ge=0.0, le=1.0)
+    bass_swap_width_beats: BassSwapWidthBeats = 4
+
+
+class TransitionVariant(BaseModel):
+    """A named, deterministic alternative way to perform the SAME base
+    transition — same anchors/tempo interpretation as the top-level `plan`,
+    only presentation (length/style/bass-swap window) differs. See
+    services/transition_planner.build_transition_variants."""
+
+    id: Literal["smooth", "bass_swap", "quick"]
+    name: str
+    description: str
+    plan: TransitionSuggestion
 
 
 class TransitionSuggestRequest(BaseModel):
@@ -144,6 +160,7 @@ class TransitionSuggestRequest(BaseModel):
 
 class TransitionSuggestResponse(BaseModel):
     plan: TransitionSuggestion
+    variants: list[TransitionVariant]
     effective_song_b_bpm: float = Field(..., gt=0)
     tempo_compatibility: Literal["compatible", "moderate", "significant", "extreme"]
     used_tempo_normalization: bool

@@ -312,10 +312,32 @@ export interface SuggestedTransitionPlan {
   songBGainDb: number;
   crossfadeBias: number;
   songBTempoMultiplier: SongBTempoMultiplier;
+  transitionStyle: TransitionStyle;
+  bassSwapPosition: number;
+  bassSwapWidthBeats: BassSwapWidthBeats;
+}
+
+/** A stable, deterministic identifier for one of the M9 transition
+ * variants — see the backend's build_transition_variants. */
+export type TransitionVariantId = "smooth" | "bass_swap" | "quick";
+
+/**
+ * One named, deterministic way to perform the SAME base transition (same
+ * anchors/tempo interpretation as TransitionSuggestion.plan) — only
+ * `plan`'s presentation fields (length/style/bass-swap window) differ
+ * between variants. `name`/`description` are presentation-only; every
+ * editable value lives in `plan`, never duplicated into metadata.
+ */
+export interface TransitionVariant {
+  id: TransitionVariantId;
+  name: string;
+  description: string;
+  plan: SuggestedTransitionPlan;
 }
 
 export interface TransitionSuggestion {
   plan: SuggestedTransitionPlan;
+  variants: TransitionVariant[];
   effectiveSongBBpm: number;
   tempoCompatibility: TempoCompatibility;
   usedTempoNormalization: boolean;
@@ -331,16 +353,29 @@ export interface TransitionSuggestion {
   songBLocalMode: MusicalMode | null;
 }
 
+interface SuggestedTransitionPlanResponse {
+  song_a_anchor: { beat_index: number; time_seconds: number };
+  song_b_anchor: { beat_index: number; time_seconds: number };
+  transition_beats: TransitionBeats;
+  song_a_gain_db: number;
+  song_b_gain_db: number;
+  crossfade_bias: number;
+  song_b_tempo_multiplier: SongBTempoMultiplier;
+  transition_style: TransitionStyle;
+  bass_swap_position: number;
+  bass_swap_width_beats: BassSwapWidthBeats;
+}
+
+interface TransitionVariantResponse {
+  id: TransitionVariantId;
+  name: string;
+  description: string;
+  plan: SuggestedTransitionPlanResponse;
+}
+
 interface TransitionSuggestResponseBody {
-  plan: {
-    song_a_anchor: { beat_index: number; time_seconds: number };
-    song_b_anchor: { beat_index: number; time_seconds: number };
-    transition_beats: TransitionBeats;
-    song_a_gain_db: number;
-    song_b_gain_db: number;
-    crossfade_bias: number;
-    song_b_tempo_multiplier: SongBTempoMultiplier;
-  };
+  plan: SuggestedTransitionPlanResponse;
+  variants: TransitionVariantResponse[];
   effective_song_b_bpm: number;
   tempo_compatibility: TempoCompatibility;
   used_tempo_normalization: boolean;
@@ -351,6 +386,29 @@ interface TransitionSuggestResponseBody {
   song_a_local_mode: MusicalMode | null;
   song_b_local_key: PitchClass | null;
   song_b_local_mode: MusicalMode | null;
+}
+
+function suggestedPlanFromResponse(
+  plan: SuggestedTransitionPlanResponse,
+): SuggestedTransitionPlan {
+  return {
+    songAAnchor: {
+      beatIndex: plan.song_a_anchor.beat_index,
+      timeSeconds: plan.song_a_anchor.time_seconds,
+    },
+    songBAnchor: {
+      beatIndex: plan.song_b_anchor.beat_index,
+      timeSeconds: plan.song_b_anchor.time_seconds,
+    },
+    transitionBeats: plan.transition_beats,
+    songAGainDb: plan.song_a_gain_db,
+    songBGainDb: plan.song_b_gain_db,
+    crossfadeBias: plan.crossfade_bias,
+    songBTempoMultiplier: plan.song_b_tempo_multiplier,
+    transitionStyle: plan.transition_style,
+    bassSwapPosition: plan.bass_swap_position,
+    bassSwapWidthBeats: plan.bass_swap_width_beats,
+  };
 }
 
 export class SuggestTransitionError extends Error {
@@ -398,21 +456,13 @@ export async function suggestTransition(
   const data = (await response.json()) as TransitionSuggestResponseBody;
 
   return {
-    plan: {
-      songAAnchor: {
-        beatIndex: data.plan.song_a_anchor.beat_index,
-        timeSeconds: data.plan.song_a_anchor.time_seconds,
-      },
-      songBAnchor: {
-        beatIndex: data.plan.song_b_anchor.beat_index,
-        timeSeconds: data.plan.song_b_anchor.time_seconds,
-      },
-      transitionBeats: data.plan.transition_beats,
-      songAGainDb: data.plan.song_a_gain_db,
-      songBGainDb: data.plan.song_b_gain_db,
-      crossfadeBias: data.plan.crossfade_bias,
-      songBTempoMultiplier: data.plan.song_b_tempo_multiplier,
-    },
+    plan: suggestedPlanFromResponse(data.plan),
+    variants: data.variants.map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      description: variant.description,
+      plan: suggestedPlanFromResponse(variant.plan),
+    })),
     effectiveSongBBpm: data.effective_song_b_bpm,
     tempoCompatibility: data.tempo_compatibility,
     usedTempoNormalization: data.used_tempo_normalization,

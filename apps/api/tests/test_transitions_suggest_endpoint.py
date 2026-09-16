@@ -91,6 +91,9 @@ def test_suggest_endpoint_response_matches_the_frontend_transition_plan_shape() 
         "song_b_gain_db",
         "crossfade_bias",
         "song_b_tempo_multiplier",
+        "transition_style",
+        "bass_swap_position",
+        "bass_swap_width_beats",
     }
 
 
@@ -136,3 +139,39 @@ def test_suggest_endpoint_rejects_malformed_request_body() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_suggest_endpoint_still_returns_the_existing_suggestion_plan() -> None:
+    """item 15: the M9 `variants` addition must not disturb the pre-M9
+    top-level `plan` and its metadata."""
+    song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
+    song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
+
+    response = client.post(
+        "/transitions/suggest",
+        json={"song_a_analysis": song_a, "song_b_analysis": song_b},
+    )
+
+    body = response.json()
+    assert body["plan"]["song_a_anchor"]["beat_index"] == 150
+    assert body["plan"]["song_b_anchor"]["beat_index"] == 10
+    assert body["plan"]["transition_style"] == "smooth"
+    assert "harmonic_compatibility" in body
+    assert "tempo_compatibility" in body
+
+
+def test_suggest_endpoint_returns_the_three_expected_variants() -> None:
+    song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
+    song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
+
+    response = client.post(
+        "/transitions/suggest",
+        json={"song_a_analysis": song_a, "song_b_analysis": song_b},
+    )
+
+    variants = response.json()["variants"]
+    assert [variant["id"] for variant in variants] == ["smooth", "bass_swap", "quick"]
+    for variant in variants:
+        assert set(variant.keys()) == {"id", "name", "description", "plan"}
+        assert variant["plan"]["song_a_anchor"]["beat_index"] == 150
+        assert variant["plan"]["song_b_anchor"]["beat_index"] == 10

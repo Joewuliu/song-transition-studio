@@ -5,17 +5,17 @@ import { BackendStatus } from "@/components/BackendStatus";
 import { TrackSlot } from "@/components/TrackSlot";
 import { TransitionAnchorSummary } from "@/components/TransitionAnchorSummary";
 import { TransitionEditor, type SuggestionInfo } from "@/components/TransitionEditor";
+import { TransitionOptionsPanel } from "@/components/TransitionOptionsPanel";
 import { TransitionPreviewPanel } from "@/components/TransitionPreviewPanel";
 import { useBeatAnchorControls } from "@/hooks/useBeatAnchorControls";
 import { useTransitionPreview } from "@/hooks/useTransitionPreview";
 import { useTransitionSuggestion } from "@/hooks/useTransitionSuggestion";
+import { useVariantPreview } from "@/hooks/useVariantPreview";
 import { EMPTY_BEATS } from "@/lib/beats";
-import type { TrackAnalysis, TransitionSuggestion } from "@/lib/api";
+import type { TrackAnalysis, TransitionSuggestion, TransitionVariant } from "@/lib/api";
 import {
-  DEFAULT_BASS_SWAP_POSITION,
-  DEFAULT_BASS_SWAP_WIDTH_BEATS,
   DEFAULT_MIX_SETTINGS,
-  DEFAULT_TRANSITION_STYLE,
+  DEFAULT_SONG_B_TEMPO_MULTIPLIER,
   clampBassSwapPosition,
   clampCrossfadeBias,
   clampGainDb,
@@ -72,71 +72,137 @@ export default function Home() {
     [applyPlanUpdate],
   );
 
-  const applySuggestion = useCallback(
-    (suggestion: TransitionSuggestion) => {
-      applyPlanUpdate(() => ({
-        songAAnchor: suggestion.plan.songAAnchor,
-        songBAnchor: suggestion.plan.songBAnchor,
-        transitionBeats: suggestion.plan.transitionBeats,
-        songAGainDb: suggestion.plan.songAGainDb,
-        songBGainDb: suggestion.plan.songBGainDb,
-        crossfadeBias: suggestion.plan.crossfadeBias,
-        songBTempoMultiplier: suggestion.plan.songBTempoMultiplier,
-        // M8 style/bass-swap defaults — the planner doesn't choose a style
-        // yet, so every suggestion starts as a plain "smooth" transition.
-        transitionStyle: DEFAULT_TRANSITION_STYLE,
-        bassSwapPosition: DEFAULT_BASS_SWAP_POSITION,
-        bassSwapWidthBeats: DEFAULT_BASS_SWAP_WIDTH_BEATS,
-      }));
-      setIsSuggestionEdited(false);
-    },
-    [applyPlanUpdate],
+  const suggestion = useTransitionSuggestion();
+  const variantPreview = useVariantPreview();
+
+  // The suggestion whose variant was most recently adopted into the editor
+  // — distinct from `suggestion.state`, which just tracks the latest
+  // /transitions/suggest fetch (options can be fetched again without
+  // disturbing whatever was already adopted into the editable plan).
+  const [adoptedSuggestion, setAdoptedSuggestion] = useState<TransitionSuggestion | null>(
+    null,
   );
 
-  const suggestion = useTransitionSuggestion({ onSuggested: applySuggestion });
+  // The single centralized place a TransitionVariant's plan is copied into
+  // the editable TransitionPlan — "Use in editor" is the only caller.
+  const applyVariant = useCallback(
+    (adopted: TransitionSuggestion, variant: TransitionVariant) => {
+      applyPlanUpdate(() => ({
+        songAAnchor: variant.plan.songAAnchor,
+        songBAnchor: variant.plan.songBAnchor,
+        transitionBeats: variant.plan.transitionBeats,
+        songAGainDb: variant.plan.songAGainDb,
+        songBGainDb: variant.plan.songBGainDb,
+        crossfadeBias: variant.plan.crossfadeBias,
+        songBTempoMultiplier: variant.plan.songBTempoMultiplier,
+        transitionStyle: variant.plan.transitionStyle,
+        bassSwapPosition: variant.plan.bassSwapPosition,
+        bassSwapWidthBeats: variant.plan.bassSwapWidthBeats,
+      }));
+      setIsSuggestionEdited(false);
+      setAdoptedSuggestion(adopted);
+      // The editor's own preview system now owns this plan — clear the
+      // option-preview player so it doesn't linger as if it still
+      // represented a live, up-to-date view of the (now editable) plan.
+      variantPreview.reset();
+    },
+    [applyPlanUpdate, variantPreview],
+  );
 
-  // Clears suggestion metadata (and its edited flag) together — used
-  // whenever a track's file/analysis changes, since the suggestion no
-  // longer describes the current inputs.
+  const handleUseInEditor = useCallback(
+    (variant: TransitionVariant) => {
+      if (suggestion.state.status !== "success") return;
+      applyVariant(suggestion.state.suggestion, variant);
+    },
+    [suggestion.state, applyVariant],
+  );
+
+  const handlePreviewVariant = useCallback(
+    (variant: TransitionVariant) => {
+      if (!songAFile || !songAAnalysis || !songBFile || !songBAnalysis) return;
+      variantPreview.previewVariant({
+        variant,
+        songAFile,
+        songBFile,
+        songAAnalysis,
+        songBAnalysis,
+      });
+    },
+    [songAFile, songAAnalysis, songBFile, songBAnalysis, variantPreview],
+  );
+
+  // Clears suggestion/adoption metadata (and the edited flag) together —
+  // used whenever a track's file/analysis changes, since none of it still
+  // describes the current inputs.
   const clearSuggestion = useCallback(() => {
     suggestion.clear();
+    variantPreview.reset();
+    setAdoptedSuggestion(null);
     setIsSuggestionEdited(false);
-  }, [suggestion]);
+  }, [suggestion, variantPreview]);
 
-  // A source track's file/analysis changing invalidates the preview
-  // entirely (rendered from audio that may no longer be loaded) and clears
-  // any suggestion metadata (it no longer describes the current inputs).
+  // A source track's FILE identity changing (replace or remove) means the
+  // whole pair the current plan was built for is gone: every anchor, mix
+  // setting, and tempo interpretation on the plan was chosen relative to
+  // the OLD pairing (e.g. songBTempoMultiplier only means something
+  // relative to both tracks' BPMs together), so the plan starts over
+  // completely rather than partially — same fresh shape as first load.
+  const resetPlanForNewTrackPair = useCallback(() => {
+    setTransitionPlan(createInitialTransitionPlan());
+    preview.reset();
+    clearSuggestion();
+  }, [preview, clearSuggestion]);
+
   const handleSongAFileChange = useCallback(
     (file: File | null) => {
       setSongAFile(file);
-      preview.reset();
-      clearSuggestion();
+      resetPlanForNewTrackPair();
     },
-    [preview, clearSuggestion],
+    [resetPlanForNewTrackPair],
   );
+  // Re-analyzing the SAME file is lighter-weight: it must invalidate the
+  // preview and any suggestion/variant/adopted metadata (none of it still
+  // describes the fresh analysis), but must NOT reset mix settings or the
+  // other track's anchor — LoadedTrack already refreshes-or-clears this
+  // track's own anchor beforehand (see its handleAnalysisSuccess) using
+  // the updated beats array, which this deliberately leaves untouched.
+  //
+  // songBTempoMultiplier is the one plan field that's an exception:
+  // it's derived from the BPM *relationship* between both analyses, not a
+  // user-facing mix control, so it's reset to 1 here rather than preserved
+  // — a stale multiplier could silently misdescribe the new BPM(s). "Find
+  // transitions" can choose the correct multiplier again from there.
+  const invalidateTempoMultiplier = useCallback(() => {
+    setTransitionPlan((plan) => ({
+      ...plan,
+      songBTempoMultiplier: DEFAULT_SONG_B_TEMPO_MULTIPLIER,
+    }));
+  }, []);
+
   const handleSongAAnalysisChange = useCallback(
     (analysis: TrackAnalysis | null) => {
       setSongAAnalysis(analysis);
+      invalidateTempoMultiplier();
       preview.reset();
       clearSuggestion();
     },
-    [preview, clearSuggestion],
+    [invalidateTempoMultiplier, preview, clearSuggestion],
   );
   const handleSongBFileChange = useCallback(
     (file: File | null) => {
       setSongBFile(file);
-      preview.reset();
-      clearSuggestion();
+      resetPlanForNewTrackPair();
     },
-    [preview, clearSuggestion],
+    [resetPlanForNewTrackPair],
   );
   const handleSongBAnalysisChange = useCallback(
     (analysis: TrackAnalysis | null) => {
       setSongBAnalysis(analysis);
+      invalidateTempoMultiplier();
       preview.reset();
       clearSuggestion();
     },
-    [preview, clearSuggestion],
+    [invalidateTempoMultiplier, preview, clearSuggestion],
   );
 
   // An anchor becoming null only happens when its track is replaced or
@@ -280,7 +346,7 @@ export default function Home() {
     transitionPlan.bassSwapPosition === DEFAULT_MIX_SETTINGS.bassSwapPosition &&
     transitionPlan.bassSwapWidthBeats === DEFAULT_MIX_SETTINGS.bassSwapWidthBeats;
 
-  const handleSuggest = () => {
+  const handleFindTransitions = () => {
     if (!canSuggest || suggestion.state.status === "suggesting") return;
     if (!songAAnalysis || !songBAnalysis) return;
     suggestion.suggest(songAAnalysis, songBAnalysis);
@@ -318,19 +384,23 @@ export default function Home() {
     });
   };
 
+  // Reflects whichever suggestion the CURRENT editable plan was actually
+  // adopted from — not necessarily the latest /transitions/suggest fetch,
+  // since options can be re-fetched without disturbing an already-adopted
+  // plan (see applyVariant/adoptedSuggestion above).
   const suggestionInfo: SuggestionInfo | null =
-    suggestion.state.status === "success" && songBAnalysis
+    adoptedSuggestion && songBAnalysis
       ? {
-          tempoCompatibility: suggestion.state.suggestion.tempoCompatibility,
-          usedTempoNormalization: suggestion.state.suggestion.usedTempoNormalization,
+          tempoCompatibility: adoptedSuggestion.tempoCompatibility,
+          usedTempoNormalization: adoptedSuggestion.usedTempoNormalization,
           songBRawBpm: songBAnalysis.tempoBpm,
-          effectiveSongBBpm: suggestion.state.suggestion.effectiveSongBBpm,
+          effectiveSongBBpm: adoptedSuggestion.effectiveSongBBpm,
           isEdited: isSuggestionEdited,
-          harmonicCompatibility: suggestion.state.suggestion.harmonicCompatibility,
-          songALocalKey: suggestion.state.suggestion.songALocalKey,
-          songALocalMode: suggestion.state.suggestion.songALocalMode,
-          songBLocalKey: suggestion.state.suggestion.songBLocalKey,
-          songBLocalMode: suggestion.state.suggestion.songBLocalMode,
+          harmonicCompatibility: adoptedSuggestion.harmonicCompatibility,
+          songALocalKey: adoptedSuggestion.songALocalKey,
+          songALocalMode: adoptedSuggestion.songALocalMode,
+          songBLocalKey: adoptedSuggestion.songBLocalKey,
+          songBLocalMode: adoptedSuggestion.songBLocalMode,
         }
       : null;
 
@@ -371,23 +441,13 @@ export default function Home() {
         />
 
         {canSuggest && (
-          <section className="flex flex-col gap-3 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-            <button
-              type="button"
-              onClick={handleSuggest}
-              disabled={suggestion.state.status === "suggesting"}
-              className="self-start rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-400 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200"
-            >
-              {suggestion.state.status === "suggesting"
-                ? "Suggesting…"
-                : suggestion.state.status === "success"
-                  ? "Suggest again"
-                  : "Suggest transition"}
-            </button>
-            {suggestion.state.status === "error" && (
-              <p className="text-xs text-red-500">{suggestion.state.message}</p>
-            )}
-          </section>
+          <TransitionOptionsPanel
+            suggestionState={suggestion.state}
+            onFindTransitions={handleFindTransitions}
+            variantPreviewState={variantPreview.state}
+            onPreviewVariant={handlePreviewVariant}
+            onUseInEditor={handleUseInEditor}
+          />
         )}
 
         <TransitionAnchorSummary plan={transitionPlan} />
