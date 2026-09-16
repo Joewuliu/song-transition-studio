@@ -12,7 +12,7 @@ import {
   type TransitionBeats,
   type TransitionPlan,
 } from "@/lib/transitionPlan";
-import type { TempoCompatibility } from "@/lib/api";
+import type { MusicalMode, PitchClass, TempoCompatibility } from "@/lib/api";
 import { TransitionCurveVisualization } from "@/components/TransitionCurveVisualization";
 
 export interface AnchorControlState {
@@ -33,6 +33,14 @@ export interface SuggestionInfo {
    * suggestion was applied. Only changes the banner's label — the
    * underlying tempo-interpretation metadata stays visible either way. */
   isEdited: boolean;
+  /** Local harmonic context around the *selected* anchors specifically —
+   * not the tracks' overall estimated key. Null local keys mean the
+   * signal there was too weak/ambiguous to trust. */
+  harmonicCompatibility: number;
+  songALocalKey: PitchClass | null;
+  songALocalMode: MusicalMode | null;
+  songBLocalKey: PitchClass | null;
+  songBLocalMode: MusicalMode | null;
 }
 
 const TEMPO_COMPATIBILITY_LABEL: Record<TempoCompatibility, string> = {
@@ -41,6 +49,37 @@ const TEMPO_COMPATIBILITY_LABEL: Record<TempoCompatibility, string> = {
   significant: "noticeable tempo adjustment",
   extreme: "large tempo mismatch — results may sound off",
 };
+
+type HarmonicMatchLabel =
+  | "highly compatible"
+  | "compatible"
+  | "mixed"
+  | "tense"
+  | "unknown";
+
+/**
+ * Maps the numeric harmonic-compatibility score to a restrained,
+ * documented label. "unknown" whenever either side's local key couldn't
+ * be trusted — the score itself falls back to a neutral 0.5 in that case,
+ * which must never be presented as if it were an actual measurement.
+ *
+ * Thresholds (score is always in [0, 1]):
+ *   >= 0.85            -> "highly compatible"  (same/relative key, or better)
+ *   >= 0.65             -> "compatible"         (fifth/fourth, parallel major-minor)
+ *   >= 0.4              -> "mixed"
+ *   <  0.4              -> "tense"
+ */
+function harmonicMatchLabel(
+  compatibility: number,
+  songALocalKey: PitchClass | null,
+  songBLocalKey: PitchClass | null,
+): HarmonicMatchLabel {
+  if (songALocalKey === null || songBLocalKey === null) return "unknown";
+  if (compatibility >= 0.85) return "highly compatible";
+  if (compatibility >= 0.65) return "compatible";
+  if (compatibility >= 0.4) return "mixed";
+  return "tense";
+}
 
 interface TransitionEditorProps {
   plan: TransitionPlan;
@@ -89,6 +128,24 @@ export function TransitionEditor({
               {suggestionInfo.effectiveSongBBpm.toFixed(1)} BPM
             </span>
           )}
+          <span>
+            Harmonic match:{" "}
+            {harmonicMatchLabel(
+              suggestionInfo.harmonicCompatibility,
+              suggestionInfo.songALocalKey,
+              suggestionInfo.songBLocalKey,
+            )}
+          </span>
+          {suggestionInfo.songALocalKey &&
+            suggestionInfo.songALocalMode &&
+            suggestionInfo.songBLocalKey &&
+            suggestionInfo.songBLocalMode && (
+              <span>
+                Local harmony: {suggestionInfo.songALocalKey}{" "}
+                {suggestionInfo.songALocalMode} → {suggestionInfo.songBLocalKey}{" "}
+                {suggestionInfo.songBLocalMode}
+              </span>
+            )}
         </div>
       )}
 

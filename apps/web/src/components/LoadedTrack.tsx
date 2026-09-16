@@ -138,6 +138,13 @@ export function LoadedTrack({
           <>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-400">
               <span>{analysisState.result.tempoBpm.toFixed(1)} BPM</span>
+              {analysisState.result.estimatedKey &&
+                analysisState.result.estimatedMode && (
+                  <span>
+                    {analysisState.result.estimatedKey}{" "}
+                    {analysisState.result.estimatedMode}
+                  </span>
+                )}
               <span>{analysisState.result.beatCount} beats</span>
               <span>
                 {formatDuration(analysisState.result.durationSeconds)} analyzed

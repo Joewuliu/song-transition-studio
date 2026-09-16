@@ -1,8 +1,8 @@
 """Deterministic transition-plan suggestion from two already-analyzed
 tracks.
 
-track analysis (TrackAnalysis, incl. entry/exit candidates)
-   -> this planner
+track analysis (TrackAnalysis, incl. entry/exit candidates + local key)
+   -> this planner (pairwise candidate selection + M6 tempo/length/gain)
    -> a TransitionPlan-shaped suggestion
    -> the existing manual editor / renderer, entirely unchanged
 
@@ -15,11 +15,30 @@ import math
 from dataclasses import dataclass
 
 from app.schemas import TrackAnalysis, TransitionCandidate
+from app.services.harmonic_compatibility import (
+    NEUTRAL_COMPATIBILITY,
+    harmonic_compatibility,
+)
 
 # Deterministic fallback positions (fraction of track duration), used only
 # when a track has no eligible candidate for its role at all.
 SONG_A_FALLBACK_POSITION = 0.75
 SONG_B_FALLBACK_POSITION = 0.15
+
+# --- Pairwise candidate-pair scoring --------------------------------------
+# With at most MAX_CANDIDATES_PER_ROLE (~10) candidates per role, evaluating
+# every (exit, entry) pair is trivial (~100 pairs). For each pair:
+#   pair_score = EXIT_QUALITY_WEIGHT  * song_a_candidate.score
+#              + ENTRY_QUALITY_WEIGHT * song_b_candidate.score
+#              + HARMONY_WEIGHT       * harmonic_compatibility(...)
+# Harmony gets a meaningfully smaller weight than the two candidates' own
+# structural/positional quality scores combined (0.2 vs 0.8), so a highly
+# compatible key pairing can break a near-tie between similarly strong
+# candidates, but can never make a clearly weak structural candidate beat a
+# clearly strong one on harmony alone.
+EXIT_QUALITY_WEIGHT = 0.40
+ENTRY_QUALITY_WEIGHT = 0.40
+HARMONY_WEIGHT = 0.20
 
 # Reasonable equivalent tempo interpretations for Song B relative to its
 # raw analyzed BPM — tempo trackers sometimes report the same pulse at
@@ -57,6 +76,9 @@ class AnchorChoice:
     energy_before: float | None
     energy_after: float | None
     from_candidate: bool
+    local_key: str | None = None
+    local_mode: str | None = None
+    local_key_confidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -70,22 +92,14 @@ class TransitionSuggestionResult:
     song_b_tempo_multiplier: float
     effective_song_b_bpm: float
     tempo_compatibility: str
+    harmonic_compatibility: float
 
 
 def suggest_transition_plan(
     song_a_analysis: TrackAnalysis, song_b_analysis: TrackAnalysis
 ) -> TransitionSuggestionResult:
-    song_a_anchor = _choose_anchor(
-        song_a_analysis.exit_candidates,
-        song_a_analysis.beats,
-        song_a_analysis.duration_seconds,
-        SONG_A_FALLBACK_POSITION,
-    )
-    song_b_anchor = _choose_anchor(
-        song_b_analysis.entry_candidates,
-        song_b_analysis.beats,
-        song_b_analysis.duration_seconds,
-        SONG_B_FALLBACK_POSITION,
+    song_a_anchor, song_b_anchor, harmony = _choose_anchors(
+        song_a_analysis, song_b_analysis
     )
 
     multiplier = _choose_tempo_multiplier(
@@ -112,10 +126,94 @@ def suggest_transition_plan(
         song_b_tempo_multiplier=multiplier,
         effective_song_b_bpm=effective_song_b_bpm,
         tempo_compatibility=tempo_compatibility,
+        harmonic_compatibility=harmony,
     )
 
 
-def _choose_anchor(
+def _choose_anchors(
+    song_a_analysis: TrackAnalysis, song_b_analysis: TrackAnalysis
+) -> tuple[AnchorChoice, AnchorChoice, float]:
+    """Picks the (Song A exit, Song B entry) anchor pair. When both roles
+    have candidates, every pair is scored together (see
+    _choose_best_candidate_pair) so harmonic compatibility can influence
+    which specific candidates are chosen — not just their independent
+    quality scores. When either side has no candidates at all, that side
+    falls back to M6's deterministic nearest-beat choice, and harmony is
+    computed (or left neutral) from whatever local context is available."""
+    exit_candidates = song_a_analysis.exit_candidates
+    entry_candidates = song_b_analysis.entry_candidates
+
+    if exit_candidates and entry_candidates:
+        return _choose_best_candidate_pair(exit_candidates, entry_candidates)
+
+    song_a_anchor = _choose_anchor_independent(
+        exit_candidates,
+        song_a_analysis.beats,
+        song_a_analysis.duration_seconds,
+        SONG_A_FALLBACK_POSITION,
+    )
+    song_b_anchor = _choose_anchor_independent(
+        entry_candidates,
+        song_b_analysis.beats,
+        song_b_analysis.duration_seconds,
+        SONG_B_FALLBACK_POSITION,
+    )
+    harmony = harmonic_compatibility(
+        song_a_anchor.local_key,
+        song_a_anchor.local_mode,
+        song_b_anchor.local_key,
+        song_b_anchor.local_mode,
+    )
+    return song_a_anchor, song_b_anchor, harmony
+
+
+def _choose_best_candidate_pair(
+    exit_candidates: list[TransitionCandidate],
+    entry_candidates: list[TransitionCandidate],
+) -> tuple[AnchorChoice, AnchorChoice, float]:
+    best_pair_score = -math.inf
+    best_exit: TransitionCandidate = exit_candidates[0]
+    best_entry: TransitionCandidate = entry_candidates[0]
+    best_harmony = NEUTRAL_COMPATIBILITY
+
+    for exit_candidate in exit_candidates:
+        for entry_candidate in entry_candidates:
+            harmony = harmonic_compatibility(
+                exit_candidate.local_key,
+                exit_candidate.local_mode,
+                entry_candidate.local_key,
+                entry_candidate.local_mode,
+            )
+            pair_score = (
+                EXIT_QUALITY_WEIGHT * exit_candidate.score
+                + ENTRY_QUALITY_WEIGHT * entry_candidate.score
+                + HARMONY_WEIGHT * harmony
+            )
+            if pair_score > best_pair_score:
+                best_pair_score = pair_score
+                best_exit = exit_candidate
+                best_entry = entry_candidate
+                best_harmony = harmony
+
+    song_a_anchor = _anchor_from_candidate(best_exit)
+    song_b_anchor = _anchor_from_candidate(best_entry)
+    return song_a_anchor, song_b_anchor, best_harmony
+
+
+def _anchor_from_candidate(candidate: TransitionCandidate) -> AnchorChoice:
+    return AnchorChoice(
+        beat_index=candidate.beat_index,
+        time_seconds=candidate.time_seconds,
+        energy_before=candidate.energy_before,
+        energy_after=candidate.energy_after,
+        from_candidate=True,
+        local_key=candidate.local_key,
+        local_mode=candidate.local_mode,
+        local_key_confidence=candidate.local_key_confidence,
+    )
+
+
+def _choose_anchor_independent(
     candidates: list[TransitionCandidate],
     beats: list[float],
     duration_seconds: float,
@@ -123,13 +221,7 @@ def _choose_anchor(
 ) -> AnchorChoice:
     if candidates:
         best = max(candidates, key=lambda candidate: candidate.score)
-        return AnchorChoice(
-            beat_index=best.beat_index,
-            time_seconds=best.time_seconds,
-            energy_before=best.energy_before,
-            energy_after=best.energy_after,
-            from_candidate=True,
-        )
+        return _anchor_from_candidate(best)
 
     beat_index = _nearest_beat_index(beats, fallback_position * duration_seconds)
     return AnchorChoice(

@@ -3,12 +3,20 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+PitchClass = Literal["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+Mode = Literal["major", "minor"]
+
 
 class TransitionCandidate(BaseModel):
     """A beat that scored well as a potential transition entry/exit point —
     not a downbeat, bar, or phrase boundary; just a beat near a locally
-    meaningful energy/onset change. `time_seconds` matches the track's
-    `beats` array exactly (never a derived/rounded approximation)."""
+    meaningful energy/onset/structural change. `time_seconds` matches the
+    track's `beats` array exactly (never a derived/rounded approximation).
+
+    `local_key`/`local_mode`/`local_key_confidence` describe an estimated
+    key/mode of a small window around this specific beat, not the whole
+    track — see GLOBAL vs LOCAL key estimation in audio_analysis.py. Either
+    can be null when the local signal is too weak/ambiguous to trust."""
 
     beat_index: int = Field(..., ge=0)
     time_seconds: float = Field(..., ge=0)
@@ -16,6 +24,10 @@ class TransitionCandidate(BaseModel):
     boundary_strength: float = Field(..., ge=0)
     energy_before: float = Field(..., ge=0)
     energy_after: float = Field(..., ge=0)
+    structure_strength: float = Field(default=0.0, ge=0, le=1)
+    local_key: PitchClass | None = None
+    local_mode: Mode | None = None
+    local_key_confidence: float = Field(default=0.0, ge=0, le=1)
 
 
 class TrackAnalysis(BaseModel):
@@ -23,6 +35,12 @@ class TrackAnalysis(BaseModel):
     tempo_bpm: float = Field(..., ge=0)
     beat_count: int = Field(..., ge=0)
     beats: list[float]
+    # Global estimate over the whole track — a separate, coarser signal
+    # from each candidate's own local_key above. Null when the harmonic
+    # signal is too weak/ambiguous to trust (never a guessed value).
+    estimated_key: PitchClass | None = None
+    estimated_mode: Mode | None = None
+    key_confidence: float = Field(default=0.0, ge=0, le=1)
     # Small, ranked shortlists (not full frame-level feature data) — see
     # services/audio_analysis.py for how these are derived. Both roles are
     # computed for every track since a track's Song A/B role isn't known
@@ -103,3 +121,13 @@ class TransitionSuggestResponse(BaseModel):
     used_tempo_normalization: bool
     song_a_anchor_source: Literal["candidate", "fallback"]
     song_b_anchor_source: Literal["candidate", "fallback"]
+    # Local harmonic context around the *selected* anchors specifically —
+    # not the tracks' global estimated_key — plus the deterministic
+    # compatibility score used to help choose this anchor pair. Neutral
+    # (0.5) / null whenever reliable local harmony wasn't available; this
+    # never blocks a suggestion from succeeding.
+    harmonic_compatibility: float = Field(..., ge=0, le=1)
+    song_a_local_key: PitchClass | None = None
+    song_a_local_mode: Mode | None = None
+    song_b_local_key: PitchClass | None = None
+    song_b_local_mode: Mode | None = None

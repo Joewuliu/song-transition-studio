@@ -65,6 +65,9 @@ def test_valid_wav_is_accepted_with_correct_schema() -> None:
         "tempo_bpm",
         "beat_count",
         "beats",
+        "estimated_key",
+        "estimated_mode",
+        "key_confidence",
         "entry_candidates",
         "exit_candidates",
     }

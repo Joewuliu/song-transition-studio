@@ -36,6 +36,9 @@ def _candidate(
     *,
     energy_before: float = 0.1,
     energy_after: float = 0.2,
+    local_key: str | None = None,
+    local_mode: str | None = None,
+    local_key_confidence: float = 0.0,
 ) -> TransitionCandidate:
     return TransitionCandidate(
         beat_index=beat_index,
@@ -44,6 +47,9 @@ def _candidate(
         boundary_strength=0.5,
         energy_before=energy_before,
         energy_after=energy_after,
+        local_key=local_key,
+        local_mode=local_mode,
+        local_key_confidence=local_key_confidence,
     )
 
 
@@ -130,6 +136,80 @@ def test_song_b_prefers_highest_scoring_entry_candidate() -> None:
 
     assert result.song_b_anchor.beat_index == 20
     assert result.song_b_anchor.from_candidate is True
+
+
+def test_pairwise_prefers_better_harmony_over_slightly_higher_score() -> None:
+    """Exit candidates: a slightly-higher-scoring one in a harmonically
+    distant key (F#, a tritone from the entry's C) vs a slightly-lower-
+    scoring one that shares the entry's exact key. The combined pair score
+    should prefer the harmonically compatible pair."""
+    exit_strong_score_poor_harmony = _candidate(
+        50, 25.0, 0.9, local_key="F#", local_mode="major"
+    )
+    exit_weaker_score_great_harmony = _candidate(
+        70, 35.0, 0.8, local_key="C", local_mode="major"
+    )
+    entry = _candidate(10, 5.0, 0.8, local_key="C", local_mode="major")
+
+    song_a = _analysis(
+        120.0,
+        200,
+        exit_candidates=[
+            exit_strong_score_poor_harmony,
+            exit_weaker_score_great_harmony,
+        ],
+    )
+    song_b = _analysis(120.0, 200, entry_candidates=[entry])
+
+    result = suggest_transition_plan(song_a, song_b)
+
+    assert result.song_a_anchor.beat_index == 70
+    assert result.harmonic_compatibility == 1.0
+
+
+def test_harmony_cannot_make_a_terrible_candidate_beat_a_much_stronger_one() -> None:
+    """A terrible-scoring exit candidate with perfect harmony must not beat
+    a much stronger exit candidate that merely has poor harmony — harmony
+    is weighted low enough (0.2) that it can't dominate a large quality gap
+    (0.9 vs 0.05, i.e. 0.4 * 0.85 = 0.34 potential swing, versus harmony's
+    maximum possible swing of only 0.2 * 1.0 = 0.2)."""
+    exit_terrible_perfect_harmony = _candidate(
+        50, 25.0, 0.05, local_key="C", local_mode="major"
+    )
+    exit_excellent_poor_harmony = _candidate(
+        70, 35.0, 0.95, local_key="F#", local_mode="major"
+    )
+    entry = _candidate(10, 5.0, 0.8, local_key="C", local_mode="major")
+
+    song_a = _analysis(
+        120.0,
+        200,
+        exit_candidates=[exit_terrible_perfect_harmony, exit_excellent_poor_harmony],
+    )
+    song_b = _analysis(120.0, 200, entry_candidates=[entry])
+
+    result = suggest_transition_plan(song_a, song_b)
+
+    assert result.song_a_anchor.beat_index == 70
+
+
+def test_pairwise_harmony_is_computed_from_the_selected_pair_specifically() -> None:
+    """Different Song B candidates imply different best Song A pairings —
+    confirms the planner truly evaluates pairs jointly, not each side's
+    single best candidate independently."""
+    exit_c_major = _candidate(50, 25.0, 0.8, local_key="C", local_mode="major")
+    exit_g_major = _candidate(70, 35.0, 0.8, local_key="G", local_mode="major")
+    song_a = _analysis(120.0, 200, exit_candidates=[exit_c_major, exit_g_major])
+
+    entry_matches_c = _candidate(10, 5.0, 0.8, local_key="C", local_mode="major")
+    song_b_prefers_c = _analysis(120.0, 200, entry_candidates=[entry_matches_c])
+    result_c = suggest_transition_plan(song_a, song_b_prefers_c)
+    assert result_c.song_a_anchor.beat_index == 50  # C major pairs perfectly with C
+
+    entry_matches_g = _candidate(10, 5.0, 0.8, local_key="G", local_mode="major")
+    song_b_prefers_g = _analysis(120.0, 200, entry_candidates=[entry_matches_g])
+    result_g = suggest_transition_plan(song_a, song_b_prefers_g)
+    assert result_g.song_a_anchor.beat_index == 70  # G major pairs perfectly with G
 
 
 def test_suggested_anchors_are_members_of_the_beats_array() -> None:
@@ -280,6 +360,16 @@ def test_gain_suggestion_defaults_to_zero_without_candidate_energy_data() -> Non
 
     assert result.song_a_gain_db == 0.0
     assert result.song_b_gain_db == 0.0
+
+
+def test_missing_local_key_produces_neutral_harmonic_compatibility() -> None:
+    # Candidates here never set local_key/local_mode (defaults to None).
+    song_a = _analysis(120.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
+    song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
+
+    result = suggest_transition_plan(song_a, song_b)
+
+    assert result.harmonic_compatibility == 0.5
 
 
 def test_crossfade_bias_defaults_to_zero() -> None:

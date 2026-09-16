@@ -258,6 +258,11 @@ export default function Home() {
           songBRawBpm: songBAnalysis.tempoBpm,
           effectiveSongBBpm: suggestion.state.suggestion.effectiveSongBBpm,
           isEdited: isSuggestionEdited,
+          harmonicCompatibility: suggestion.state.suggestion.harmonicCompatibility,
+          songALocalKey: suggestion.state.suggestion.songALocalKey,
+          songALocalMode: suggestion.state.suggestion.songALocalMode,
+          songBLocalKey: suggestion.state.suggestion.songBLocalKey,
+          songBLocalMode: suggestion.state.suggestion.songBLocalMode,
         }
       : null;
 

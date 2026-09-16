@@ -23,12 +23,33 @@ export async function checkBackendHealth(): Promise<boolean> {
   }
 }
 
+/** The 12 pitch classes as reported by the backend's key estimator. */
+export type PitchClass =
+  | "C"
+  | "C#"
+  | "D"
+  | "D#"
+  | "E"
+  | "F"
+  | "F#"
+  | "G"
+  | "G#"
+  | "A"
+  | "A#"
+  | "B";
+export type MusicalMode = "major" | "minor";
+
 /**
  * A beat that scored well as a potential transition entry/exit point —
  * not a downbeat, bar, or phrase boundary, just a beat near a locally
- * meaningful energy/onset change. The frontend doesn't currently render
- * these directly; they're carried on TrackAnalysis so /transitions/suggest
- * can use them without re-uploading audio.
+ * meaningful energy/onset/structural change. The frontend doesn't
+ * currently render these directly; they're carried on TrackAnalysis so
+ * /transitions/suggest can use them without re-uploading audio.
+ *
+ * `localKey`/`localMode` describe an estimated key/mode of a small window
+ * around this specific beat (not the whole track — see TrackAnalysis's
+ * own estimatedKey/estimatedMode for that). Either can be null when the
+ * local signal is too weak/ambiguous to trust.
  */
 export interface TransitionCandidate {
   beatIndex: number;
@@ -37,6 +58,10 @@ export interface TransitionCandidate {
   boundaryStrength: number;
   energyBefore: number;
   energyAfter: number;
+  structureStrength: number;
+  localKey: PitchClass | null;
+  localMode: MusicalMode | null;
+  localKeyConfidence: number;
 }
 
 export interface TrackAnalysis {
@@ -44,6 +69,11 @@ export interface TrackAnalysis {
   tempoBpm: number;
   beatCount: number;
   beats: number[];
+  /** Global estimate over the whole track; null when too weak/ambiguous
+   * to trust rather than a guessed value. */
+  estimatedKey: PitchClass | null;
+  estimatedMode: MusicalMode | null;
+  keyConfidence: number;
   entryCandidates: TransitionCandidate[];
   exitCandidates: TransitionCandidate[];
 }
@@ -55,6 +85,10 @@ interface TransitionCandidateResponse {
   boundary_strength: number;
   energy_before: number;
   energy_after: number;
+  structure_strength: number;
+  local_key: PitchClass | null;
+  local_mode: MusicalMode | null;
+  local_key_confidence: number;
 }
 
 interface TrackAnalysisResponse {
@@ -62,6 +96,9 @@ interface TrackAnalysisResponse {
   tempo_bpm: number;
   beat_count: number;
   beats: number[];
+  estimated_key: PitchClass | null;
+  estimated_mode: MusicalMode | null;
+  key_confidence: number;
   entry_candidates: TransitionCandidateResponse[];
   exit_candidates: TransitionCandidateResponse[];
 }
@@ -103,6 +140,9 @@ export async function analyzeTrack(file: File): Promise<TrackAnalysis> {
     tempoBpm: data.tempo_bpm,
     beatCount: data.beat_count,
     beats: data.beats,
+    estimatedKey: data.estimated_key,
+    estimatedMode: data.estimated_mode,
+    keyConfidence: data.key_confidence,
     entryCandidates: data.entry_candidates.map(candidateFromResponse),
     exitCandidates: data.exit_candidates.map(candidateFromResponse),
   };
@@ -118,6 +158,10 @@ function candidateFromResponse(
     boundaryStrength: candidate.boundary_strength,
     energyBefore: candidate.energy_before,
     energyAfter: candidate.energy_after,
+    structureStrength: candidate.structure_strength,
+    localKey: candidate.local_key,
+    localMode: candidate.local_mode,
+    localKeyConfidence: candidate.local_key_confidence,
   };
 }
 
@@ -131,6 +175,10 @@ function candidateToRequestBody(
     boundary_strength: candidate.boundaryStrength,
     energy_before: candidate.energyBefore,
     energy_after: candidate.energyAfter,
+    structure_strength: candidate.structureStrength,
+    local_key: candidate.localKey,
+    local_mode: candidate.localMode,
+    local_key_confidence: candidate.localKeyConfidence,
   };
 }
 
@@ -140,6 +188,9 @@ function analysisToRequestBody(analysis: TrackAnalysis): TrackAnalysisResponse {
     tempo_bpm: analysis.tempoBpm,
     beat_count: analysis.beatCount,
     beats: analysis.beats,
+    estimated_key: analysis.estimatedKey,
+    estimated_mode: analysis.estimatedMode,
+    key_confidence: analysis.keyConfidence,
     entry_candidates: analysis.entryCandidates.map(candidateToRequestBody),
     exit_candidates: analysis.exitCandidates.map(candidateToRequestBody),
   };
@@ -262,6 +313,14 @@ export interface TransitionSuggestion {
   usedTempoNormalization: boolean;
   songAAnchorSource: AnchorSource;
   songBAnchorSource: AnchorSource;
+  /** Local harmonic context around the *selected* anchors specifically —
+   * not the tracks' global estimatedKey — plus the deterministic
+   * compatibility score used to help choose this anchor pair. */
+  harmonicCompatibility: number;
+  songALocalKey: PitchClass | null;
+  songALocalMode: MusicalMode | null;
+  songBLocalKey: PitchClass | null;
+  songBLocalMode: MusicalMode | null;
 }
 
 interface TransitionSuggestResponseBody {
@@ -279,6 +338,11 @@ interface TransitionSuggestResponseBody {
   used_tempo_normalization: boolean;
   song_a_anchor_source: AnchorSource;
   song_b_anchor_source: AnchorSource;
+  harmonic_compatibility: number;
+  song_a_local_key: PitchClass | null;
+  song_a_local_mode: MusicalMode | null;
+  song_b_local_key: PitchClass | null;
+  song_b_local_mode: MusicalMode | null;
 }
 
 export class SuggestTransitionError extends Error {
@@ -346,6 +410,11 @@ export async function suggestTransition(
     usedTempoNormalization: data.used_tempo_normalization,
     songAAnchorSource: data.song_a_anchor_source,
     songBAnchorSource: data.song_b_anchor_source,
+    harmonicCompatibility: data.harmonic_compatibility,
+    songALocalKey: data.song_a_local_key,
+    songALocalMode: data.song_a_local_mode,
+    songBLocalKey: data.song_b_local_key,
+    songBLocalMode: data.song_b_local_mode,
   };
 }
 

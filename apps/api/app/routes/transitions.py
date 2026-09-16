@@ -116,6 +116,11 @@ async def suggest_transition(
         song_b_anchor_source="candidate"
         if result.song_b_anchor.from_candidate
         else "fallback",
+        harmonic_compatibility=round(result.harmonic_compatibility, 4),
+        song_a_local_key=result.song_a_anchor.local_key,
+        song_a_local_mode=result.song_a_anchor.local_mode,
+        song_b_local_key=result.song_b_anchor.local_key,
+        song_b_local_mode=result.song_b_anchor.local_mode,
     )
 
 
