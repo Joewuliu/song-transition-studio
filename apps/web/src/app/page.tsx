@@ -7,11 +7,13 @@ import { TransitionAnchorSummary } from "@/components/TransitionAnchorSummary";
 import { TransitionEditor, type SuggestionInfo } from "@/components/TransitionEditor";
 import { TransitionOptionsPanel } from "@/components/TransitionOptionsPanel";
 import { TransitionPreviewPanel } from "@/components/TransitionPreviewPanel";
+import { WorkflowProgress } from "@/components/WorkflowProgress";
 import { useBeatAnchorControls } from "@/hooks/useBeatAnchorControls";
 import { useTransitionPreview } from "@/hooks/useTransitionPreview";
 import { useTransitionSuggestion } from "@/hooks/useTransitionSuggestion";
 import { useVariantPreview } from "@/hooks/useVariantPreview";
 import { EMPTY_BEATS } from "@/lib/beats";
+import { defaultExportFilename } from "@/lib/export";
 import type { TrackAnalysis, TransitionSuggestion, TransitionVariant } from "@/lib/api";
 import {
   DEFAULT_MIX_SETTINGS,
@@ -334,6 +336,12 @@ export default function Home() {
     songBAnalysis !== null &&
     transitionPlan.songBAnchor !== null;
 
+  // Export eligibility derives from the SAME preview state the player
+  // itself renders from — never a separate boolean that could drift out
+  // of sync with what's actually currently playable.
+  const isPreviewFreshAndExportable =
+    preview.state.status === "success" && !preview.state.isStale;
+
   // Deliberately excludes songBTempoMultiplier — it isn't a "mix setting"
   // Reset touches (see its doc comment in transitionPlan.ts), so it must
   // not affect whether the Reset button reads as already-at-defaults.
@@ -406,18 +414,27 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 flex-col bg-white dark:bg-black">
-      <header className="flex items-start justify-between gap-4 px-8 py-8 sm:px-12">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Song Transition Studio
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Load two tracks to start building a transition.
-          </p>
+      <header className="flex flex-col gap-4 px-8 py-8 sm:px-12">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Song Transition Studio
+            </h1>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              Add two local audio tracks to get started. Files stay on your
+              device until you analyze or preview them.
+            </p>
+          </div>
+          <div className="origin-top-right scale-90 opacity-60">
+            <BackendStatus />
+          </div>
         </div>
-        <div className="origin-top-right scale-90 opacity-60">
-          <BackendStatus />
-        </div>
+        <WorkflowProgress
+          tracksAdded={songAFile !== null && songBFile !== null}
+          bothAnalyzed={songAAnalysis !== null && songBAnalysis !== null}
+          transitionChosen={canGenerate}
+          exportReady={isPreviewFreshAndExportable}
+        />
       </header>
 
       <main className="flex flex-1 flex-col gap-12 px-8 pb-20 sm:px-12">
@@ -439,6 +456,11 @@ export default function Home() {
           anchor={transitionPlan.songBAnchor}
           onAnchorChange={handleSongBAnchorChange}
         />
+        {(songAFile === null) !== (songBFile === null) && (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Add {songAFile === null ? "Song A" : "Song B"} to continue.
+          </p>
+        )}
 
         {canSuggest && (
           <TransitionOptionsPanel
@@ -472,7 +494,14 @@ export default function Home() {
           />
         )}
 
-        <TransitionPreviewPanel state={preview.state} onRegenerate={handleGenerate} />
+        <TransitionPreviewPanel
+          state={preview.state}
+          onRegenerate={handleGenerate}
+          defaultFilename={defaultExportFilename(
+            songAFile?.name ?? "song-a",
+            songBFile?.name ?? "song-b",
+          )}
+        />
       </main>
     </div>
   );

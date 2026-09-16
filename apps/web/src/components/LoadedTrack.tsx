@@ -131,9 +131,14 @@ export function LoadedTrack({
         </div>
       </div>
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      <p className="text-xs text-red-500" aria-live="polite">
+        {error}
+      </p>
 
-      <div className="flex flex-col gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+      <div
+        className="flex flex-col gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800"
+        aria-live="polite"
+      >
         {analysisState.status === "success" ? (
           <>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-400">

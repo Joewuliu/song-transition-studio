@@ -42,9 +42,9 @@ export function TransitionOptionsPanel({
             ? "Find transitions again"
             : "Find transitions"}
       </button>
-      {suggestionState.status === "error" && (
-        <p className="text-xs text-red-500">{suggestionState.message}</p>
-      )}
+      <p className="text-xs text-red-500" aria-live="polite">
+        {suggestionState.status === "error" ? suggestionState.message : ""}
+      </p>
 
       {suggestionState.status === "success" && (
         <div className="flex flex-col gap-2">
@@ -102,6 +102,7 @@ function VariantOption({
           type="button"
           onClick={onPreview}
           disabled={isAnyVariantRendering}
+          aria-label={`Preview ${variant.name}`}
           className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:border-zinc-400 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
         >
           {isThisRendering ? "Loading preview…" : "Preview"}
@@ -109,13 +110,14 @@ function VariantOption({
         <button
           type="button"
           onClick={onUseInEditor}
+          aria-label={`Use ${variant.name} in editor`}
           className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
         >
           Use in editor
         </button>
-        {isActive && previewState.status === "error" && (
-          <span className="text-xs text-red-500">{previewState.message}</span>
-        )}
+        <span className="text-xs text-red-500" aria-live="polite">
+          {isActive && previewState.status === "error" ? previewState.message : ""}
+        </span>
       </div>
 
       {isActive && previewState.status === "success" && (
@@ -141,7 +143,7 @@ function VariantAudioPlayer({ file, label }: { file: File; label: string }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-wide text-zinc-400">{label}</span>
-      <audio controls src={url} className="h-8 w-full" />
+      <audio controls src={url} aria-label={label} className="h-8 w-full" />
     </div>
   );
 }

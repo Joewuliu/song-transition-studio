@@ -1,4 +1,4 @@
-const AUDIO_EXTENSION_PATTERN =
+export const AUDIO_EXTENSION_PATTERN =
   /\.(mp3|wav|wave|ogg|oga|opus|m4a|aac|flac|webm|weba)$/i;
 
 export function isSupportedAudioFile(file: File): boolean {
