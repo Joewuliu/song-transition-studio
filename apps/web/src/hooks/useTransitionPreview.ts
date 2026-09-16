@@ -6,7 +6,11 @@ import {
   RenderTransitionError,
   type TrackAnalysis,
 } from "@/lib/api";
-import type { BeatAnchor } from "@/lib/transitionPlan";
+import type {
+  BeatAnchor,
+  SongBTempoMultiplier,
+  TransitionBeats,
+} from "@/lib/transitionPlan";
 
 export type TransitionPreviewState =
   | { status: "idle" }
@@ -20,6 +24,11 @@ export type TransitionPreviewState =
       file: File;
       targetBpm: number;
       durationSeconds: number;
+      transitionBeats: TransitionBeats;
+      /** True once a plan edit (anchor, length, gain, bias) has happened
+       * since this preview was rendered. The audio itself is untouched and
+       * still playable — only the label/CTA around it changes. */
+      isStale: boolean;
     }
   | { status: "error"; message: string };
 
@@ -30,11 +39,20 @@ interface GenerateArgs {
   songBAnalysis: TrackAnalysis;
   songAAnchor: BeatAnchor;
   songBAnchor: BeatAnchor;
+  transitionBeats: TransitionBeats;
+  songAGainDb: number;
+  songBGainDb: number;
+  crossfadeBias: number;
+  songBTempoMultiplier: SongBTempoMultiplier;
 }
 
 interface UseTransitionPreviewResult {
   state: TransitionPreviewState;
   generate: (args: GenerateArgs) => void;
+  /** Marks an existing successful preview as out of date without removing
+   * it (anchor/mix-setting edits) — a no-op for every other state. */
+  markStale: () => void;
+  /** Fully discards the preview (source track/analysis changed). */
   reset: () => void;
 }
 
@@ -59,6 +77,11 @@ export function useTransitionPreview(): UseTransitionPreviewResult {
       songBAnchor: args.songBAnchor,
       songABpm: args.songAAnalysis.tempoBpm,
       songBBpm: args.songBAnalysis.tempoBpm,
+      transitionBeats: args.transitionBeats,
+      songAGainDb: args.songAGainDb,
+      songBGainDb: args.songBGainDb,
+      crossfadeBias: args.crossfadeBias,
+      songBTempoMultiplier: args.songBTempoMultiplier,
     }).then(
       (result) => {
         nextGeneration.current += 1;
@@ -71,6 +94,8 @@ export function useTransitionPreview(): UseTransitionPreviewResult {
           file,
           targetBpm: result.targetBpm ?? args.songAAnalysis.tempoBpm,
           durationSeconds: result.durationSeconds ?? 0,
+          transitionBeats: args.transitionBeats,
+          isStale: false,
         });
       },
       (error: unknown) => {
@@ -83,9 +108,17 @@ export function useTransitionPreview(): UseTransitionPreviewResult {
     );
   }, []);
 
+  const markStale = useCallback(() => {
+    setState((current) =>
+      current.status === "success" && !current.isStale
+        ? { ...current, isStale: true }
+        : current,
+    );
+  }, []);
+
   const reset = useCallback(() => {
     setState((current) => (current.status === "idle" ? current : { status: "idle" }));
   }, []);
 
-  return { state, generate, reset };
+  return { state, generate, markStale, reset };
 }

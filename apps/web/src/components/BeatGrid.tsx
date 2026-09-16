@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { selectDisplayBeatIndices } from "@/lib/beats";
 
 interface BeatGridProps {
-  beats: number[];
+  beats: readonly number[];
   /** The waveform's own duration (from useWaveSurfer), not the analysis
    * response's duration — markers must line up with what's actually drawn. */
   duration: number;

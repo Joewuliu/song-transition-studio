@@ -3,7 +3,7 @@
 import { useWaveSurfer } from "@/hooks/useWaveSurfer";
 import type { TransitionPreviewState } from "@/hooks/useTransitionPreview";
 import { formatDuration } from "@/lib/audio";
-import { TRANSITION_BEATS } from "@/lib/transitionPlan";
+import type { TransitionBeats } from "@/lib/transitionPlan";
 import { PauseIcon, PlayIcon } from "@/components/icons";
 
 const PREVIEW_WAVE_COLOR = "#a1a1aa";
@@ -11,9 +11,13 @@ const PREVIEW_PROGRESS_COLOR = "#52525b";
 
 interface TransitionPreviewPanelProps {
   state: TransitionPreviewState;
+  onRegenerate: () => void;
 }
 
-export function TransitionPreviewPanel({ state }: TransitionPreviewPanelProps) {
+export function TransitionPreviewPanel({
+  state,
+  onRegenerate,
+}: TransitionPreviewPanelProps) {
   if (state.status === "idle") return null;
 
   return (
@@ -33,12 +37,30 @@ export function TransitionPreviewPanel({ state }: TransitionPreviewPanelProps) {
       )}
 
       {state.status === "success" && (
-        <PreviewPlayer
-          key={state.generation}
-          file={state.file}
-          targetBpm={state.targetBpm}
-          durationSeconds={state.durationSeconds}
-        />
+        <>
+          {state.isStale && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-400">
+              <span>
+                Preview out of date — the plan has changed since this was
+                generated.
+              </span>
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="font-medium underline-offset-4 hover:underline"
+              >
+                Regenerate preview
+              </button>
+            </div>
+          )}
+          <PreviewPlayer
+            key={state.generation}
+            file={state.file}
+            targetBpm={state.targetBpm}
+            durationSeconds={state.durationSeconds}
+            transitionBeats={state.transitionBeats}
+          />
+        </>
       )}
     </section>
   );
@@ -48,10 +70,12 @@ function PreviewPlayer({
   file,
   targetBpm,
   durationSeconds,
+  transitionBeats,
 }: {
   file: File;
   targetBpm: number;
   durationSeconds: number;
+  transitionBeats: TransitionBeats;
 }) {
   const { containerRef, isReady, isPlaying, togglePlay } = useWaveSurfer({
     file,
@@ -84,7 +108,7 @@ function PreviewPlayer({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-400">
-        <span>{TRANSITION_BEATS} beats</span>
+        <span>{transitionBeats} beats</span>
         <span>Target: {targetBpm.toFixed(1)} BPM</span>
         <span>{formatDuration(durationSeconds)} preview</span>
       </div>

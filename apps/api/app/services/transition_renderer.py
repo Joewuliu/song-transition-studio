@@ -1,9 +1,12 @@
 """Renders a short, beat-aligned crossfade preview between two tracks.
 
 Song A keeps its native tempo; Song B is time-stretched (tempo only, pitch
-unaffected) so its beat period matches Song A's. The two selected anchor
-beats are aligned at the center of a fixed 16-beat window, and mixed with
-an equal-power crossfade.
+unaffected) so its beat period matches Song A's *effective* tempo — the
+raw analyzed BPM times an optional half/double-time multiplier (see
+services/transition_planner.py), since tempo trackers sometimes describe
+the same musical pulse at half or double speed. The two selected anchor
+beats are aligned at the center of a configurable-length beat window, and
+mixed with an equal-power crossfade.
 
 Performance note: this does NOT time-stretch or decode either track in
 full. Only a small region of each track around its anchor is read from
@@ -51,13 +54,26 @@ def render_transition(
     song_a_bpm: float,
     song_b_bpm: float,
     transition_beats: int = 16,
+    song_a_gain_db: float = 0.0,
+    song_b_gain_db: float = 0.0,
+    crossfade_bias: float = 0.0,
+    song_b_tempo_multiplier: float = 1.0,
 ) -> RenderedTransition:
     _validate_bpm(song_a_bpm, "Song A")
     _validate_bpm(song_b_bpm, "Song B")
     _validate_anchor(song_a_anchor_seconds, "Song A")
     _validate_anchor(song_b_anchor_seconds, "Song B")
+    _validate_finite(song_a_gain_db, "Song A gain")
+    _validate_finite(song_b_gain_db, "Song B gain")
+    _validate_finite(crossfade_bias, "Crossfade bias")
+    _validate_bpm(song_b_bpm * song_b_tempo_multiplier, "Song B (effective)")
 
     target_bpm = song_a_bpm
+    # A tempo tracker can report the same musical pulse at half or double
+    # speed; the multiplier (chosen upstream by the planner, or left at 1
+    # for pure manual use) corrects for that *without* overwriting the raw
+    # analyzed BPM, which the UI keeps showing separately.
+    effective_song_b_bpm = song_b_bpm * song_b_tempo_multiplier
     beat_period = 60.0 / target_bpm
     window_seconds = transition_beats * beat_period
     half_window = window_seconds / 2.0
@@ -69,7 +85,7 @@ def render_transition(
         song_b_window = _render_song_b_window(
             song_b_path,
             song_b_anchor_seconds,
-            source_bpm=song_b_bpm,
+            source_bpm=effective_song_b_bpm,
             target_bpm=target_bpm,
             half_window=half_window,
         )
@@ -85,7 +101,12 @@ def render_transition(
     song_a_window = _match_length(_to_channels(song_a_window, channels), n_samples)
     song_b_window = _match_length(_to_channels(song_b_window, channels), n_samples)
 
-    mixed = _equal_power_mix(song_a_window, song_b_window)
+    # Gain trim is applied per-track before mixing, so it scales each
+    # song's actual contribution rather than the already-blended output.
+    song_a_window = song_a_window * _db_to_linear(song_a_gain_db)
+    song_b_window = song_b_window * _db_to_linear(song_b_gain_db)
+
+    mixed = _equal_power_mix(song_a_window, song_b_window, bias=crossfade_bias)
     mixed = _safety_limit(mixed)
 
     buffer_bytes = _write_wav(mixed, RENDER_SAMPLE_RATE)
@@ -108,6 +129,11 @@ def _validate_anchor(seconds: float, label: str) -> None:
         raise TransitionRenderError(
             f"{label} has an invalid anchor time ({seconds!r})."
         )
+
+
+def _validate_finite(value: float, label: str) -> None:
+    if not math.isfinite(value):
+        raise TransitionRenderError(f"{label} is invalid ({value!r}).")
 
 
 def _render_song_a_window(
@@ -277,12 +303,47 @@ def _match_length(y: np.ndarray, n_samples: int) -> np.ndarray:
     return np.concatenate([y, pad], axis=0)
 
 
-def _equal_power_mix(song_a: np.ndarray, song_b: np.ndarray) -> np.ndarray:
+def _bias_transform(x: np.ndarray, bias: float) -> np.ndarray:
+    """Remaps the normalized crossfade position x (0..1) so `bias` shifts
+    *when* the blend favors each song, while every bias value still starts
+    at 0 and ends at 1.
+
+    f(x) = x ** gamma, with gamma = 2 ** bias.
+
+    - bias == 0  -> gamma == 1 -> f(x) == x (identity: the original,
+      unbiased equal-power crossfade).
+    - bias  < 0  -> gamma  < 1 -> f(x) > x on (0, 1): the effective
+      position races ahead of the raw one, so Song B's gain rises faster
+      and it becomes dominant earlier.
+    - bias  > 0  -> gamma  > 1 -> f(x) < x on (0, 1): the effective
+      position lags behind, so Song A stays dominant longer and Song B's
+      rise is delayed.
+
+    f(0) = 0**gamma = 0 and f(1) = 1**gamma = 1 hold for every gamma > 0,
+    so the fade's start/end gains are unaffected by bias. x**gamma is
+    strictly increasing on [0, 1] for any gamma > 0 (its derivative,
+    gamma * x**(gamma-1), is positive throughout), so f stays monotonic
+    for the whole clamped bias range of [-1, 1] (gamma in [0.5, 2]) —
+    unlike shifting x by a constant and clamping, this never produces a
+    flat (zero-slope-over-an-interval) region.
+    """
+    gamma = 2.0**bias
+    return np.power(x, gamma)
+
+
+def _equal_power_mix(
+    song_a: np.ndarray, song_b: np.ndarray, *, bias: float = 0.0
+) -> np.ndarray:
     n = song_a.shape[0]
     x = np.linspace(0.0, 1.0, n, endpoint=False, dtype=np.float64)
-    gain_a = np.cos(x * np.pi / 2.0).astype(np.float32)
-    gain_b = np.sin(x * np.pi / 2.0).astype(np.float32)
+    biased_x = _bias_transform(x, bias)
+    gain_a = np.cos(biased_x * np.pi / 2.0).astype(np.float32)
+    gain_b = np.sin(biased_x * np.pi / 2.0).astype(np.float32)
     return song_a * gain_a[:, None] + song_b * gain_b[:, None]
+
+
+def _db_to_linear(db: float) -> float:
+    return 10.0 ** (db / 20.0)
 
 
 def _safety_limit(mixed: np.ndarray) -> np.ndarray:

@@ -65,11 +65,15 @@ def test_valid_wav_is_accepted_with_correct_schema() -> None:
         "tempo_bpm",
         "beat_count",
         "beats",
+        "entry_candidates",
+        "exit_candidates",
     }
     assert isinstance(body["duration_seconds"], (int, float))
     assert isinstance(body["tempo_bpm"], (int, float))
     assert isinstance(body["beat_count"], int)
     assert isinstance(body["beats"], list)
+    assert isinstance(body["entry_candidates"], list)
+    assert isinstance(body["exit_candidates"], list)
 
 
 def test_duration_is_reasonable() -> None:

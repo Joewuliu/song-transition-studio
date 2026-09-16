@@ -1,12 +1,16 @@
 const MAX_VISIBLE_BEAT_MARKERS = 240;
 
+/** Stable empty-array reference so hooks/components depending on a track's
+ * beats don't churn every render while no analysis result exists yet. */
+export const EMPTY_BEATS: readonly number[] = [];
+
 /**
  * Finds the index of the beat closest to `timeSeconds`. `beats` must be
  * ascending (guaranteed by the analysis API), so this runs as a binary
  * search rather than a linear scan.
  */
 export function findNearestBeatIndex(
-  beats: number[],
+  beats: readonly number[],
   timeSeconds: number,
 ): number | null {
   if (beats.length === 0) return null;
@@ -39,7 +43,7 @@ export function findNearestBeatIndex(
  * previous/next controls regardless of this subset.
  */
 export function selectDisplayBeatIndices(
-  beats: number[],
+  beats: readonly number[],
   selectedIndex: number | null,
   maxMarkers: number = MAX_VISIBLE_BEAT_MARKERS,
 ): number[] {

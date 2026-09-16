@@ -5,15 +5,12 @@ import { useWaveSurfer } from "@/hooks/useWaveSurfer";
 import { useTrackAnalysis } from "@/hooks/useTrackAnalysis";
 import { useBeatAnchorControls } from "@/hooks/useBeatAnchorControls";
 import { formatDuration } from "@/lib/audio";
+import { EMPTY_BEATS } from "@/lib/beats";
 import type { TrackAnalysis } from "@/lib/api";
 import type { BeatAnchor } from "@/lib/transitionPlan";
 import { PauseIcon, PlayIcon } from "@/components/icons";
 import { BeatGrid } from "@/components/BeatGrid";
 import { BeatAnchorPanel } from "@/components/BeatAnchorPanel";
-
-// Stable reference so hooks depending on `beats` don't churn every render
-// while no analysis result exists yet.
-const EMPTY_BEATS: number[] = [];
 
 interface LoadedTrackProps {
   file: File;

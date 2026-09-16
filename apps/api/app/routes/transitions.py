@@ -5,7 +5,17 @@ from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
 
-from app.schemas import TransitionRenderRequest
+from app.schemas import (
+    SuggestedAnchor,
+    TransitionRenderRequest,
+    TransitionSuggestion,
+    TransitionSuggestRequest,
+    TransitionSuggestResponse,
+)
+from app.services.transition_planner import (
+    TransitionPlannerError,
+    suggest_transition_plan,
+)
 from app.services.transition_renderer import TransitionRenderError, render_transition
 from app.services.upload_validation import read_validated_upload
 
@@ -42,6 +52,10 @@ async def render_transition_preview(
             song_a_bpm=parsed_plan.song_a_bpm,
             song_b_bpm=parsed_plan.song_b_bpm,
             transition_beats=parsed_plan.transition_beats,
+            song_a_gain_db=parsed_plan.song_a_gain_db,
+            song_b_gain_db=parsed_plan.song_b_gain_db,
+            crossfade_bias=parsed_plan.crossfade_bias,
+            song_b_tempo_multiplier=parsed_plan.song_b_tempo_multiplier,
         )
     except TransitionRenderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -60,6 +74,48 @@ async def render_transition_preview(
             "X-Target-Bpm": f"{result.target_bpm:.3f}",
             "X-Preview-Duration-Seconds": f"{result.duration_seconds:.3f}",
         },
+    )
+
+
+@router.post("/suggest", response_model=TransitionSuggestResponse)
+async def suggest_transition(
+    request: TransitionSuggestRequest,
+) -> TransitionSuggestResponse:
+    """Suggests a starting TransitionPlan from two already-computed track
+    analyses — no audio upload needed, since planning only needs the beats/
+    candidates already returned by /tracks/analyze."""
+    try:
+        result = suggest_transition_plan(
+            request.song_a_analysis, request.song_b_analysis
+        )
+    except TransitionPlannerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return TransitionSuggestResponse(
+        plan=TransitionSuggestion(
+            song_a_anchor=SuggestedAnchor(
+                beat_index=result.song_a_anchor.beat_index,
+                time_seconds=result.song_a_anchor.time_seconds,
+            ),
+            song_b_anchor=SuggestedAnchor(
+                beat_index=result.song_b_anchor.beat_index,
+                time_seconds=result.song_b_anchor.time_seconds,
+            ),
+            transition_beats=result.transition_beats,
+            song_a_gain_db=result.song_a_gain_db,
+            song_b_gain_db=result.song_b_gain_db,
+            crossfade_bias=result.crossfade_bias,
+            song_b_tempo_multiplier=result.song_b_tempo_multiplier,
+        ),
+        effective_song_b_bpm=round(result.effective_song_b_bpm, 3),
+        tempo_compatibility=result.tempo_compatibility,
+        used_tempo_normalization=result.song_b_tempo_multiplier != 1.0,
+        song_a_anchor_source="candidate"
+        if result.song_a_anchor.from_candidate
+        else "fallback",
+        song_b_anchor_source="candidate"
+        if result.song_b_anchor.from_candidate
+        else "fallback",
     )
 
 

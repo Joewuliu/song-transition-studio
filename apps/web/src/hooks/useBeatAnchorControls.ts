@@ -5,7 +5,7 @@ import { findNearestBeatIndex } from "@/lib/beats";
 import type { BeatAnchor } from "@/lib/transitionPlan";
 
 interface UseBeatAnchorControlsOptions {
-  beats: number[];
+  beats: readonly number[];
   anchor: BeatAnchor | null;
   onAnchorChange: (anchor: BeatAnchor | null) => void;
 }
