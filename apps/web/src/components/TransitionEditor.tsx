@@ -4,13 +4,19 @@ import { formatTimestamp } from "@/lib/audio";
 import { toDisplayBeatNumber } from "@/lib/beats";
 import { ACCENT_STYLES } from "@/lib/trackAccent";
 import {
+  BASS_SWAP_WIDTH_BEATS_OPTIONS,
   CROSSFADE_BIAS_MAX,
   CROSSFADE_BIAS_MIN,
   GAIN_DB_MAX,
   GAIN_DB_MIN,
   TRANSITION_BEATS_OPTIONS,
+  TRANSITION_STYLE_OPTIONS,
+  bassSwapOffsetBeats,
+  validBassSwapRange,
+  type BassSwapWidthBeats,
   type TransitionBeats,
   type TransitionPlan,
+  type TransitionStyle,
 } from "@/lib/transitionPlan";
 import type { MusicalMode, PitchClass, TempoCompatibility } from "@/lib/api";
 import { TransitionCurveVisualization } from "@/components/TransitionCurveVisualization";
@@ -90,6 +96,9 @@ interface TransitionEditorProps {
   onSongAGainChange: (db: number) => void;
   onSongBGainChange: (db: number) => void;
   onCrossfadeBiasChange: (bias: number) => void;
+  onTransitionStyleChange: (style: TransitionStyle) => void;
+  onBassSwapPositionChange: (position: number) => void;
+  onBassSwapWidthChange: (width: BassSwapWidthBeats) => void;
   onResetMixSettings: () => void;
   onGenerate: () => void;
   isGenerating: boolean;
@@ -105,6 +114,9 @@ export function TransitionEditor({
   onSongAGainChange,
   onSongBGainChange,
   onCrossfadeBiasChange,
+  onTransitionStyleChange,
+  onBassSwapPositionChange,
+  onBassSwapWidthChange,
   onResetMixSettings,
   onGenerate,
   isGenerating,
@@ -165,6 +177,26 @@ export function TransitionEditor({
       <TransitionCurveVisualization plan={plan} />
 
       <LengthSelector value={plan.transitionBeats} onChange={onTransitionBeatsChange} />
+
+      <TransitionStyleSelector
+        value={plan.transitionStyle}
+        onChange={onTransitionStyleChange}
+      />
+
+      {plan.transitionStyle === "bass_swap" && (
+        <>
+          <BassSwapTimingSlider
+            position={plan.bassSwapPosition}
+            transitionBeats={plan.transitionBeats}
+            bassSwapWidthBeats={plan.bassSwapWidthBeats}
+            onChange={onBassSwapPositionChange}
+          />
+          <BassSwapWidthSelector
+            value={plan.bassSwapWidthBeats}
+            onChange={onBassSwapWidthChange}
+          />
+        </>
+      )}
 
       <GainSlider
         label="Song A level"
@@ -272,6 +304,126 @@ function LengthSelector({
           </button>
         ))}
         <span className="self-center px-2 text-xs text-zinc-400">beats</span>
+      </div>
+    </div>
+  );
+}
+
+const TRANSITION_STYLE_LABEL: Record<TransitionStyle, string> = {
+  smooth: "Smooth",
+  bass_swap: "Bass swap",
+};
+
+function TransitionStyleSelector({
+  value,
+  onChange,
+}: {
+  value: TransitionStyle;
+  onChange: (style: TransitionStyle) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs text-zinc-600 dark:text-zinc-400">
+        Transition style
+      </span>
+      <div className="inline-flex w-fit rounded-full border border-zinc-300 p-0.5 dark:border-zinc-700">
+        {TRANSITION_STYLE_OPTIONS.map((style) => (
+          <button
+            key={style}
+            type="button"
+            onClick={() => onChange(style)}
+            aria-pressed={value === style}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              value === style
+                ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            }`}
+          >
+            {TRANSITION_STYLE_LABEL[style]}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Formats a bass-swap offset as a restrained, human-readable label —
+ * never the raw normalized position (e.g. "0.537"). */
+function formatBassSwapOffset(offsetBeats: number): string {
+  if (Math.abs(offsetBeats) < 0.05) return "At anchor";
+  const rounded = Math.round(Math.abs(offsetBeats) * 10) / 10;
+  const magnitude = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
+  return offsetBeats < 0 ? `${magnitude} beats early` : `${magnitude} beats late`;
+}
+
+function BassSwapTimingSlider({
+  position,
+  transitionBeats,
+  bassSwapWidthBeats,
+  onChange,
+}: {
+  position: number;
+  transitionBeats: TransitionBeats;
+  bassSwapWidthBeats: BassSwapWidthBeats;
+  onChange: (position: number) => void;
+}) {
+  const [min, max] = validBassSwapRange(transitionBeats, bassSwapWidthBeats);
+  const offsetBeats = bassSwapOffsetBeats(position, transitionBeats);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
+        <span>Bass swap timing</span>
+        <span className="tabular-nums">{formatBassSwapOffset(offsetBeats)}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">
+          Earlier
+        </span>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={0.01}
+          value={position}
+          onChange={(event) => onChange(Number(event.target.value))}
+          aria-label="Bass swap timing"
+          className="w-full accent-zinc-700 dark:accent-zinc-300"
+        />
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">
+          Later
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function BassSwapWidthSelector({
+  value,
+  onChange,
+}: {
+  value: BassSwapWidthBeats;
+  onChange: (width: BassSwapWidthBeats) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs text-zinc-600 dark:text-zinc-400">Bass swap width</span>
+      <div className="inline-flex w-fit rounded-full border border-zinc-300 p-0.5 dark:border-zinc-700">
+        {BASS_SWAP_WIDTH_BEATS_OPTIONS.map((width) => (
+          <button
+            key={width}
+            type="button"
+            onClick={() => onChange(width)}
+            aria-pressed={value === width}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              value === width
+                ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            }`}
+          >
+            {width} beats
+          </button>
+        ))}
       </div>
     </div>
   );

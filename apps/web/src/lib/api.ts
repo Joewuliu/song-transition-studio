@@ -1,7 +1,9 @@
 import type {
+  BassSwapWidthBeats,
   BeatAnchor,
   SongBTempoMultiplier,
   TransitionBeats,
+  TransitionStyle,
 } from "@/lib/transitionPlan";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -208,6 +210,9 @@ export interface RenderTransitionParams {
   songBGainDb: number;
   crossfadeBias: number;
   songBTempoMultiplier: SongBTempoMultiplier;
+  transitionStyle: TransitionStyle;
+  bassSwapPosition: number;
+  bassSwapWidthBeats: BassSwapWidthBeats;
 }
 
 export interface RenderedTransitionResult {
@@ -250,6 +255,9 @@ export async function renderTransition(
       song_b_gain_db: params.songBGainDb,
       crossfade_bias: params.crossfadeBias,
       song_b_tempo_multiplier: params.songBTempoMultiplier,
+      transition_style: params.transitionStyle,
+      bass_swap_position: params.bassSwapPosition,
+      bass_swap_width_beats: params.bassSwapWidthBeats,
     }),
   );
 

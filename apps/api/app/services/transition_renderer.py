@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import librosa
 import numpy as np
 import soundfile as sf
+from scipy import signal as scipy_signal
 
 RENDER_SAMPLE_RATE = 44100
 
@@ -30,6 +31,26 @@ RENDER_SAMPLE_RATE = 44100
 # region we actually keep, so the phase vocoder has real context at what
 # would otherwise be a hard edge. Discarded after stretching.
 STRETCH_MARGIN_SECONDS = 2.0
+
+# --- Bass Swap ---------------------------------------------------------
+# Fixed Butterworth low-pass crossover used to split each track's rendered
+# window into a low-frequency ("bass") band and an upper-frequency band.
+# 200 Hz sits just above a typical kick/bass fundamental and below most
+# other instrumentation — a reasonable MVP split, not a claim of
+# equivalence to a hardware DJ isolator's filter curves.
+BASS_CROSSOVER_HZ = 200.0
+BASS_FILTER_ORDER = 4
+
+# SOS (second-order-sections) form, built once and reused for every split —
+# more numerically stable for repeated filtering than raw (b, a)
+# coefficients, especially at this fairly low corner frequency.
+_BASS_LOWPASS_SOS = scipy_signal.butter(
+    BASS_FILTER_ORDER,
+    BASS_CROSSOVER_HZ,
+    btype="low",
+    fs=RENDER_SAMPLE_RATE,
+    output="sos",
+)
 
 
 class TransitionRenderError(Exception):
@@ -58,6 +79,9 @@ def render_transition(
     song_b_gain_db: float = 0.0,
     crossfade_bias: float = 0.0,
     song_b_tempo_multiplier: float = 1.0,
+    transition_style: str = "smooth",
+    bass_swap_position: float = 0.5,
+    bass_swap_width_beats: int = 4,
 ) -> RenderedTransition:
     _validate_bpm(song_a_bpm, "Song A")
     _validate_bpm(song_b_bpm, "Song B")
@@ -67,6 +91,10 @@ def render_transition(
     _validate_finite(song_b_gain_db, "Song B gain")
     _validate_finite(crossfade_bias, "Crossfade bias")
     _validate_bpm(song_b_bpm * song_b_tempo_multiplier, "Song B (effective)")
+    if transition_style == "bass_swap":
+        _validate_bass_swap_window(
+            transition_beats, bass_swap_width_beats, bass_swap_position
+        )
 
     target_bpm = song_a_bpm
     # A tempo tracker can report the same musical pulse at half or double
@@ -103,10 +131,25 @@ def render_transition(
 
     # Gain trim is applied per-track before mixing, so it scales each
     # song's actual contribution rather than the already-blended output.
+    # For Bass Swap, this happens before the frequency split below, so the
+    # trim scales a track's low and upper bands identically (a linear
+    # filter commutes with a scalar gain).
     song_a_window = song_a_window * _db_to_linear(song_a_gain_db)
     song_b_window = song_b_window * _db_to_linear(song_b_gain_db)
 
-    mixed = _equal_power_mix(song_a_window, song_b_window, bias=crossfade_bias)
+    if transition_style == "bass_swap":
+        mixed = _bass_swap_mix(
+            song_a_window,
+            song_b_window,
+            bias=crossfade_bias,
+            transition_beats=transition_beats,
+            bass_swap_width_beats=bass_swap_width_beats,
+            bass_swap_position=bass_swap_position,
+        )
+    else:
+        # Smooth (the default/M7 path): no crossover filtering at all, so
+        # existing smooth transitions render exactly as before.
+        mixed = _equal_power_mix(song_a_window, song_b_window, bias=crossfade_bias)
     mixed = _safety_limit(mixed)
 
     buffer_bytes = _write_wav(mixed, RENDER_SAMPLE_RATE)
@@ -331,15 +374,146 @@ def _bias_transform(x: np.ndarray, bias: float) -> np.ndarray:
     return np.power(x, gamma)
 
 
-def _equal_power_mix(
-    song_a: np.ndarray, song_b: np.ndarray, *, bias: float = 0.0
-) -> np.ndarray:
-    n = song_a.shape[0]
+def _crossfade_gains(n: int, *, bias: float) -> tuple[np.ndarray, np.ndarray]:
+    """The main equal-power crossfade gain curves over `n` samples —
+    shared by the Smooth mix and Bass Swap's upper-frequency band."""
     x = np.linspace(0.0, 1.0, n, endpoint=False, dtype=np.float64)
     biased_x = _bias_transform(x, bias)
     gain_a = np.cos(biased_x * np.pi / 2.0).astype(np.float32)
     gain_b = np.sin(biased_x * np.pi / 2.0).astype(np.float32)
+    return gain_a, gain_b
+
+
+def _equal_power_mix(
+    song_a: np.ndarray, song_b: np.ndarray, *, bias: float = 0.0
+) -> np.ndarray:
+    n = song_a.shape[0]
+    gain_a, gain_b = _crossfade_gains(n, bias=bias)
     return song_a * gain_a[:, None] + song_b * gain_b[:, None]
+
+
+def _valid_bass_swap_range(
+    transition_beats: int, bass_swap_width_beats: int
+) -> tuple[float, float]:
+    """The inclusive range of `bass_swap_position` values for which the
+    whole bass-swap window fits inside the transition (see
+    _bass_swap_half_width) — shared by request validation and rendering so
+    the two can never disagree."""
+    half_width = _bass_swap_half_width(transition_beats, bass_swap_width_beats)
+    return half_width, 1.0 - half_width
+
+
+def _bass_swap_half_width(transition_beats: int, bass_swap_width_beats: int) -> float:
+    return bass_swap_width_beats / (2.0 * transition_beats)
+
+
+def _validate_bass_swap_window(
+    transition_beats: int, bass_swap_width_beats: int, bass_swap_position: float
+) -> None:
+    if not math.isfinite(bass_swap_position):
+        raise TransitionRenderError(
+            f"Bass swap position must be a finite number ({bass_swap_position!r})."
+        )
+    low, high = _valid_bass_swap_range(transition_beats, bass_swap_width_beats)
+    if not (low <= bass_swap_position <= high):
+        raise TransitionRenderError(
+            f"Bass swap position {bass_swap_position!r} must be between "
+            f"{low:.4f} and {high:.4f} for a {bass_swap_width_beats}-beat "
+            f"swap within a {transition_beats}-beat transition."
+        )
+
+
+def _bass_swap_gains(
+    n: int,
+    *,
+    transition_beats: int,
+    bass_swap_width_beats: int,
+    bass_swap_position: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """A second, narrower equal-power crossfade for the bass band only —
+    NOT run through the main crossfade's bias transform, since bass
+    ownership swaps around `bass_swap_position` regardless of how the
+    overall blend is biased. `bass_t` is clamped to [0, 1] outside the
+    swap window, so bass gain is exactly full-A before it and exactly
+    full-B after it."""
+    half_width = _bass_swap_half_width(transition_beats, bass_swap_width_beats)
+    swap_start = bass_swap_position - half_width
+    swap_end = bass_swap_position + half_width
+
+    x = np.linspace(0.0, 1.0, n, endpoint=False, dtype=np.float64)
+    bass_t = np.clip((x - swap_start) / (swap_end - swap_start), 0.0, 1.0)
+
+    bass_gain_a = np.cos(bass_t * np.pi / 2.0).astype(np.float32)
+    bass_gain_b = np.sin(bass_t * np.pi / 2.0).astype(np.float32)
+    return bass_gain_a, bass_gain_b
+
+
+def _split_frequency_bands(y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Splits `y` (shape (n, channels), at RENDER_SAMPLE_RATE) into a low
+    band (below BASS_CROSSOVER_HZ) and an upper band, filtering every
+    channel independently. `low + upper` reconstructs `y` exactly (up to
+    floating-point precision) by construction, since upper is simply
+    `y - low` rather than a second, separately-designed filter.
+
+    Zero-phase filtering (sosfiltfilt) needs the buffer to be comfortably
+    longer than the filter's settling time. Unusually short buffers fall
+    back to a one-directional sosfilt (still a real low-pass, just with a
+    small phase shift); a buffer too short even for that yields low=0
+    (i.e. the whole signal is treated as upper-band, since there's too
+    little data to say anything about its bass content)."""
+    n = y.shape[0]
+    if n == 0:
+        return y.copy(), np.zeros_like(y)
+
+    min_zero_phase_length = 3 * (2 * _BASS_LOWPASS_SOS.shape[0] + 1)
+    low = None
+    if n > min_zero_phase_length:
+        try:
+            low = scipy_signal.sosfiltfilt(_BASS_LOWPASS_SOS, y, axis=0)
+        except ValueError:
+            low = None
+    if low is None:
+        try:
+            low = scipy_signal.sosfilt(_BASS_LOWPASS_SOS, y, axis=0)
+        except ValueError:
+            low = np.zeros_like(y)
+
+    low = low.astype(np.float32)
+    upper = (y - low).astype(np.float32)
+    return low, upper
+
+
+def _bass_swap_mix(
+    song_a: np.ndarray,
+    song_b: np.ndarray,
+    *,
+    bias: float,
+    transition_beats: int,
+    bass_swap_width_beats: int,
+    bass_swap_position: float,
+) -> np.ndarray:
+    """Bass Swap: upper frequencies follow the same main crossfade as
+    Smooth; the low-frequency ("bass") band instead follows its own
+    narrower equal-power swap centered on bass_swap_position, so Song A's
+    bass stays present longer and Song B's bass is suppressed until the
+    swap window, avoiding a long stretch of overlapping kick/bass."""
+    n = song_a.shape[0]
+
+    low_a, upper_a = _split_frequency_bands(song_a)
+    low_b, upper_b = _split_frequency_bands(song_b)
+
+    main_gain_a, main_gain_b = _crossfade_gains(n, bias=bias)
+    upper_output = upper_a * main_gain_a[:, None] + upper_b * main_gain_b[:, None]
+
+    bass_gain_a, bass_gain_b = _bass_swap_gains(
+        n,
+        transition_beats=transition_beats,
+        bass_swap_width_beats=bass_swap_width_beats,
+        bass_swap_position=bass_swap_position,
+    )
+    bass_output = low_a * bass_gain_a[:, None] + low_b * bass_gain_b[:, None]
+
+    return upper_output + bass_output
 
 
 def _db_to_linear(db: float) -> float:

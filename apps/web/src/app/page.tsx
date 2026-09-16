@@ -12,13 +12,19 @@ import { useTransitionSuggestion } from "@/hooks/useTransitionSuggestion";
 import { EMPTY_BEATS } from "@/lib/beats";
 import type { TrackAnalysis, TransitionSuggestion } from "@/lib/api";
 import {
+  DEFAULT_BASS_SWAP_POSITION,
+  DEFAULT_BASS_SWAP_WIDTH_BEATS,
   DEFAULT_MIX_SETTINGS,
+  DEFAULT_TRANSITION_STYLE,
+  clampBassSwapPosition,
   clampCrossfadeBias,
   clampGainDb,
   createInitialTransitionPlan,
+  type BassSwapWidthBeats,
   type BeatAnchor,
   type TransitionBeats,
   type TransitionPlan,
+  type TransitionStyle,
 } from "@/lib/transitionPlan";
 
 export default function Home() {
@@ -76,6 +82,11 @@ export default function Home() {
         songBGainDb: suggestion.plan.songBGainDb,
         crossfadeBias: suggestion.plan.crossfadeBias,
         songBTempoMultiplier: suggestion.plan.songBTempoMultiplier,
+        // M8 style/bass-swap defaults — the planner doesn't choose a style
+        // yet, so every suggestion starts as a plain "smooth" transition.
+        transitionStyle: DEFAULT_TRANSITION_STYLE,
+        bassSwapPosition: DEFAULT_BASS_SWAP_POSITION,
+        bassSwapWidthBeats: DEFAULT_BASS_SWAP_WIDTH_BEATS,
       }));
       setIsSuggestionEdited(false);
     },
@@ -156,7 +167,18 @@ export default function Home() {
 
   const handleTransitionBeatsChange = useCallback(
     (beats: TransitionBeats) => {
-      updatePlan((plan) => ({ ...plan, transitionBeats: beats }));
+      updatePlan((plan) => ({
+        ...plan,
+        transitionBeats: beats,
+        // A shorter/longer transition changes what positions are valid
+        // for the current bass-swap width — clamp so it never ends up
+        // pointing outside the new transition's bounds.
+        bassSwapPosition: clampBassSwapPosition(
+          plan.bassSwapPosition,
+          beats,
+          plan.bassSwapWidthBeats,
+        ),
+      }));
     },
     [updatePlan],
   );
@@ -181,6 +203,44 @@ export default function Home() {
   const handleResetMixSettings = useCallback(() => {
     updatePlan((plan) => ({ ...plan, ...DEFAULT_MIX_SETTINGS }));
   }, [updatePlan]);
+
+  const handleTransitionStyleChange = useCallback(
+    (style: TransitionStyle) => {
+      updatePlan((plan) => ({ ...plan, transitionStyle: style }));
+    },
+    [updatePlan],
+  );
+  const handleBassSwapPositionChange = useCallback(
+    (position: number) => {
+      updatePlan((plan) => ({
+        ...plan,
+        bassSwapPosition: clampBassSwapPosition(
+          position,
+          plan.transitionBeats,
+          plan.bassSwapWidthBeats,
+        ),
+      }));
+    },
+    [updatePlan],
+  );
+  const handleBassSwapWidthChange = useCallback(
+    (width: BassSwapWidthBeats) => {
+      updatePlan((plan) => ({
+        ...plan,
+        bassSwapWidthBeats: width,
+        // Widening/narrowing the swap window can push the current
+        // position out of range — clamp rather than leave a plan that
+        // would begin with Song B's bass already partially active (or
+        // end with Song A's still partially active).
+        bassSwapPosition: clampBassSwapPosition(
+          plan.bassSwapPosition,
+          plan.transitionBeats,
+          width,
+        ),
+      }));
+    },
+    [updatePlan],
+  );
 
   const songABeats = songAAnalysis?.beats ?? EMPTY_BEATS;
   const songBBeats = songBAnalysis?.beats ?? EMPTY_BEATS;
@@ -208,12 +268,17 @@ export default function Home() {
     songBAnalysis !== null &&
     transitionPlan.songBAnchor !== null;
 
+  // Deliberately excludes songBTempoMultiplier — it isn't a "mix setting"
+  // Reset touches (see its doc comment in transitionPlan.ts), so it must
+  // not affect whether the Reset button reads as already-at-defaults.
   const isMixAtDefaults =
     transitionPlan.transitionBeats === DEFAULT_MIX_SETTINGS.transitionBeats &&
     transitionPlan.songAGainDb === DEFAULT_MIX_SETTINGS.songAGainDb &&
     transitionPlan.songBGainDb === DEFAULT_MIX_SETTINGS.songBGainDb &&
     transitionPlan.crossfadeBias === DEFAULT_MIX_SETTINGS.crossfadeBias &&
-    transitionPlan.songBTempoMultiplier === DEFAULT_MIX_SETTINGS.songBTempoMultiplier;
+    transitionPlan.transitionStyle === DEFAULT_MIX_SETTINGS.transitionStyle &&
+    transitionPlan.bassSwapPosition === DEFAULT_MIX_SETTINGS.bassSwapPosition &&
+    transitionPlan.bassSwapWidthBeats === DEFAULT_MIX_SETTINGS.bassSwapWidthBeats;
 
   const handleSuggest = () => {
     if (!canSuggest || suggestion.state.status === "suggesting") return;
@@ -247,6 +312,9 @@ export default function Home() {
       songBGainDb: transitionPlan.songBGainDb,
       crossfadeBias: transitionPlan.crossfadeBias,
       songBTempoMultiplier: transitionPlan.songBTempoMultiplier,
+      transitionStyle: transitionPlan.transitionStyle,
+      bassSwapPosition: transitionPlan.bassSwapPosition,
+      bassSwapWidthBeats: transitionPlan.bassSwapWidthBeats,
     });
   };
 
@@ -334,6 +402,9 @@ export default function Home() {
             onSongAGainChange={handleSongAGainChange}
             onSongBGainChange={handleSongBGainChange}
             onCrossfadeBiasChange={handleCrossfadeBiasChange}
+            onTransitionStyleChange={handleTransitionStyleChange}
+            onBassSwapPositionChange={handleBassSwapPositionChange}
+            onBassSwapWidthChange={handleBassSwapWidthChange}
             onResetMixSettings={handleResetMixSettings}
             onGenerate={handleGenerate}
             isGenerating={preview.state.status === "generating"}

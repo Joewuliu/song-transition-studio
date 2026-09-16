@@ -1,10 +1,14 @@
 import math
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.transition_renderer import _valid_bass_swap_range
 
 PitchClass = Literal["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 Mode = Literal["major", "minor"]
+TransitionStyle = Literal["smooth", "bass_swap"]
+BassSwapWidthBeats = Literal[2, 4, 8]
 
 
 class TransitionCandidate(BaseModel):
@@ -79,6 +83,12 @@ class TransitionRenderRequest(BaseModel):
     # tracker reporting the same pulse at half/double speed doesn't force
     # an unnecessary 2x stretch. See services/transition_planner.py.
     song_b_tempo_multiplier: Literal[0.5, 1.0, 2.0] = 1.0
+    # "smooth" (default) is the original M7 full-band crossfade, unchanged.
+    # "bass_swap" additionally narrows bass ownership around
+    # bass_swap_position — see services/transition_renderer.py.
+    transition_style: TransitionStyle = "smooth"
+    bass_swap_position: float = Field(default=0.5, ge=0.0, le=1.0)
+    bass_swap_width_beats: BassSwapWidthBeats = 4
 
     @field_validator("song_a_bpm", "song_b_bpm")
     @classmethod
@@ -86,6 +96,24 @@ class TransitionRenderRequest(BaseModel):
         if not math.isfinite(value) or value <= 0:
             raise ValueError("bpm must be a finite, positive number")
         return value
+
+    @model_validator(mode="after")
+    def _validate_bass_swap_fits_transition(self) -> TransitionRenderRequest:
+        # Bass-specific fields are only meaningful (and only validated)
+        # when transition_style actually uses them — a smooth request
+        # doesn't need a valid bass-swap window at all.
+        if self.transition_style != "bass_swap":
+            return self
+        low, high = _valid_bass_swap_range(
+            self.transition_beats, self.bass_swap_width_beats
+        )
+        if not (low <= self.bass_swap_position <= high):
+            raise ValueError(
+                f"bass_swap_position must be between {low:.4f} and "
+                f"{high:.4f} for a {self.bass_swap_width_beats}-beat swap "
+                f"within a {self.transition_beats}-beat transition"
+            )
+        return self
 
 
 class SuggestedAnchor(BaseModel):

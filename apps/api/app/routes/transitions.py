@@ -56,6 +56,9 @@ async def render_transition_preview(
             song_b_gain_db=parsed_plan.song_b_gain_db,
             crossfade_bias=parsed_plan.crossfade_bias,
             song_b_tempo_multiplier=parsed_plan.song_b_tempo_multiplier,
+            transition_style=parsed_plan.transition_style,
+            bass_swap_position=parsed_plan.bass_swap_position,
+            bass_swap_width_beats=parsed_plan.bass_swap_width_beats,
         )
     except TransitionRenderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

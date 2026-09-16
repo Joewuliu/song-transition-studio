@@ -7,9 +7,11 @@ import {
   type TrackAnalysis,
 } from "@/lib/api";
 import type {
+  BassSwapWidthBeats,
   BeatAnchor,
   SongBTempoMultiplier,
   TransitionBeats,
+  TransitionStyle,
 } from "@/lib/transitionPlan";
 
 export type TransitionPreviewState =
@@ -44,6 +46,9 @@ interface GenerateArgs {
   songBGainDb: number;
   crossfadeBias: number;
   songBTempoMultiplier: SongBTempoMultiplier;
+  transitionStyle: TransitionStyle;
+  bassSwapPosition: number;
+  bassSwapWidthBeats: BassSwapWidthBeats;
 }
 
 interface UseTransitionPreviewResult {
@@ -82,6 +87,9 @@ export function useTransitionPreview(): UseTransitionPreviewResult {
       songBGainDb: args.songBGainDb,
       crossfadeBias: args.crossfadeBias,
       songBTempoMultiplier: args.songBTempoMultiplier,
+      transitionStyle: args.transitionStyle,
+      bassSwapPosition: args.bassSwapPosition,
+      bassSwapWidthBeats: args.bassSwapWidthBeats,
     }).then(
       (result) => {
         nextGeneration.current += 1;
