@@ -11,6 +11,7 @@ import { LoadedTrack } from "@/components/LoadedTrack";
 import { UploadIcon } from "@/components/icons";
 import { isSupportedAudioFile } from "@/lib/audio";
 import { ACCENT_STYLES, type TrackAccent } from "@/lib/trackAccent";
+import type { TrackAnalysis } from "@/lib/api";
 import type { BeatAnchor } from "@/lib/transitionPlan";
 
 export type { TrackAccent };
@@ -18,33 +19,34 @@ export type { TrackAccent };
 interface TrackSlotProps {
   label: string;
   accent: TrackAccent;
+  file: File | null;
+  onFileChange: (file: File | null) => void;
+  onAnalysisChange: (analysis: TrackAnalysis | null) => void;
   anchor: BeatAnchor | null;
   onAnchorChange: (anchor: BeatAnchor | null) => void;
-}
-
-interface Selection {
-  id: number;
-  file: File;
 }
 
 export function TrackSlot({
   label,
   accent,
+  file,
+  onFileChange,
+  onAnalysisChange,
   anchor,
   onAnchorChange,
 }: TrackSlotProps) {
-  const [selection, setSelection] = useState<Selection | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
-  const nextSelectionId = useRef(0);
+  // Purely a local remount key for LoadedTrack (so its internal waveform/
+  // analysis state always starts fresh on replace) — `file` itself is now
+  // owned by the parent, so this never needs to leave this component. Must
+  // be state (not a ref) since it's read during render as a `key`.
+  const [selectionKey, setSelectionKey] = useState(0);
 
   const styles = ACCENT_STYLES[accent];
 
-  // TrackSlot only tracks *which* file is selected. The object URL itself
-  // is created and revoked entirely inside useWaveSurfer's effect, right
-  // where it's consumed, so it never needs to exist as React state here.
   const applyFile = useCallback(
     (candidate: File) => {
       if (!isSupportedAudioFile(candidate)) {
@@ -52,11 +54,12 @@ export function TrackSlot({
         return;
       }
       setFileError(null);
-      nextSelectionId.current += 1;
-      setSelection({ id: nextSelectionId.current, file: candidate });
+      setSelectionKey((key) => key + 1);
+      onFileChange(candidate);
+      onAnalysisChange(null);
       onAnchorChange(null);
     },
-    [onAnchorChange],
+    [onFileChange, onAnalysisChange, onAnchorChange],
   );
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -93,8 +96,9 @@ export function TrackSlot({
   };
 
   const handleRemove = () => {
-    setSelection(null);
     setFileError(null);
+    onFileChange(null);
+    onAnalysisChange(null);
     onAnchorChange(null);
   };
 
@@ -127,7 +131,7 @@ export function TrackSlot({
             : "border-zinc-200 dark:border-zinc-800"
         }`}
       >
-        {!selection ? (
+        {!file ? (
           <button
             type="button"
             onClick={openFileDialog}
@@ -138,10 +142,11 @@ export function TrackSlot({
           </button>
         ) : (
           <LoadedTrack
-            key={selection.id}
-            file={selection.file}
+            key={selectionKey}
+            file={file}
             waveColor={styles.wave}
             progressColor={styles.progress}
+            onAnalysisChange={onAnalysisChange}
             anchor={anchor}
             onAnchorChange={onAnchorChange}
             onReplace={openFileDialog}

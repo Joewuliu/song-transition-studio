@@ -1,3 +1,5 @@
+import type { BeatAnchor } from "@/lib/transitionPlan";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export async function checkBackendHealth(): Promise<boolean> {
@@ -69,6 +71,92 @@ export async function analyzeTrack(file: File): Promise<TrackAnalysis> {
     beatCount: data.beat_count,
     beats: data.beats,
   };
+}
+
+export interface RenderTransitionParams {
+  songAFile: File;
+  songBFile: File;
+  songAAnchor: BeatAnchor;
+  songBAnchor: BeatAnchor;
+  songABpm: number;
+  songBBpm: number;
+}
+
+export interface RenderedTransitionResult {
+  wavBlob: Blob;
+  targetBpm: number | null;
+  durationSeconds: number | null;
+}
+
+export class RenderTransitionError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "RenderTransitionError";
+    this.status = status;
+  }
+}
+
+const RENDER_TRANSITION_BEATS = 16;
+
+export async function renderTransition(
+  params: RenderTransitionParams,
+): Promise<RenderedTransitionResult> {
+  const formData = new FormData();
+  formData.append("song_a", params.songAFile);
+  formData.append("song_b", params.songBFile);
+  formData.append(
+    "plan",
+    JSON.stringify({
+      song_a_anchor: {
+        beat_index: params.songAAnchor.beatIndex,
+        time_seconds: params.songAAnchor.timeSeconds,
+      },
+      song_b_anchor: {
+        beat_index: params.songBAnchor.beatIndex,
+        time_seconds: params.songBAnchor.timeSeconds,
+      },
+      song_a_bpm: params.songABpm,
+      song_b_bpm: params.songBBpm,
+      transition_beats: RENDER_TRANSITION_BEATS,
+    }),
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/transitions/render`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new RenderTransitionError(
+      "Couldn't reach the transition server. Is the backend running?",
+    );
+  }
+
+  if (!response.ok) {
+    throw new RenderTransitionError(
+      await extractErrorDetail(response),
+      response.status,
+    );
+  }
+
+  const wavBlob = await response.blob();
+
+  return {
+    wavBlob,
+    targetBpm: parseFiniteFloatHeader(response.headers.get("X-Target-Bpm")),
+    durationSeconds: parseFiniteFloatHeader(
+      response.headers.get("X-Preview-Duration-Seconds"),
+    ),
+  };
+}
+
+function parseFiniteFloatHeader(value: string | null): number | null {
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 async function extractErrorDetail(response: Response): Promise<string> {

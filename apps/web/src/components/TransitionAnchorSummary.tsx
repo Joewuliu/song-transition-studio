@@ -1,16 +1,14 @@
 import { formatTimestamp } from "@/lib/audio";
+import { toDisplayBeatNumber } from "@/lib/beats";
 import { ACCENT_STYLES } from "@/lib/trackAccent";
-import type { BeatAnchor } from "@/lib/transitionPlan";
+import type { TransitionPlan } from "@/lib/transitionPlan";
 
 interface TransitionAnchorSummaryProps {
-  songAAnchor: BeatAnchor | null;
-  songBAnchor: BeatAnchor | null;
+  plan: TransitionPlan;
 }
 
-export function TransitionAnchorSummary({
-  songAAnchor,
-  songBAnchor,
-}: TransitionAnchorSummaryProps) {
+export function TransitionAnchorSummary({ plan }: TransitionAnchorSummaryProps) {
+  const { songAAnchor, songBAnchor } = plan;
   if (!songAAnchor || !songBAnchor) return null;
 
   const offsetSeconds = songBAnchor.timeSeconds - songAAnchor.timeSeconds;
@@ -30,7 +28,8 @@ export function TransitionAnchorSummary({
             Song A
           </span>
           <span className="text-sm text-zinc-700 dark:text-zinc-300">
-            Beat {songAAnchor.beatIndex} · {formatTimestamp(songAAnchor.timeSeconds)}
+            Beat {toDisplayBeatNumber(songAAnchor.beatIndex)} ·{" "}
+            {formatTimestamp(songAAnchor.timeSeconds)}
           </span>
         </div>
         <div className="flex flex-col gap-1">
@@ -38,7 +37,8 @@ export function TransitionAnchorSummary({
             Song B
           </span>
           <span className="text-sm text-zinc-700 dark:text-zinc-300">
-            Beat {songBAnchor.beatIndex} · {formatTimestamp(songBAnchor.timeSeconds)}
+            Beat {toDisplayBeatNumber(songBAnchor.beatIndex)} ·{" "}
+            {formatTimestamp(songBAnchor.timeSeconds)}
           </span>
         </div>
       </div>

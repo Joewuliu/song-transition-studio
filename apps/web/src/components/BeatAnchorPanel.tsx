@@ -1,4 +1,5 @@
 import { formatTimestamp } from "@/lib/audio";
+import { toDisplayBeatNumber } from "@/lib/beats";
 
 interface BeatAnchorPanelProps {
   selectedIndex: number | null;
@@ -42,7 +43,7 @@ export function BeatAnchorPanel({
 
       <span>
         {selectedIndex !== null && selectedTime !== null
-          ? `Beat ${selectedIndex} · ${formatTimestamp(selectedTime)}`
+          ? `Beat ${toDisplayBeatNumber(selectedIndex)} · ${formatTimestamp(selectedTime)}`
           : "Click the waveform, or use the buttons, to set a transition anchor"}
       </span>
     </div>

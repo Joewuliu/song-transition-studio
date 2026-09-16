@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes.tracks import router as tracks_router
+from app.routes.transitions import router as transitions_router
 
 app = FastAPI(
     title="Song Transition Studio API",
@@ -18,6 +19,7 @@ app.add_middleware(
 )
 
 app.include_router(tracks_router)
+app.include_router(transitions_router)
 
 
 @app.get("/health")

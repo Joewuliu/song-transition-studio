@@ -59,3 +59,12 @@ export function selectDisplayBeatIndices(
 
   return Array.from(indices).sort((a, b) => a - b);
 }
+
+/**
+ * BeatAnchor.beatIndex stays zero-based internally (it's a direct array
+ * index) — this only converts it for user-facing text, so people see
+ * "Beat 1" rather than "Beat 0".
+ */
+export function toDisplayBeatNumber(beatIndex: number): number {
+  return beatIndex + 1;
+}

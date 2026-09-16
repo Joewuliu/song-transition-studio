@@ -9,14 +9,18 @@ export interface BeatAnchor {
   timeSeconds: number;
 }
 
+/** Fixed for M4 — not yet a user-adjustable parameter. */
+export const TRANSITION_BEATS = 16;
+
 /**
- * The transition plan is the shared representation that both the future
- * automatic transition generator and the future manual editor will read
- * from and write to. Keep it limited to what M3 actually establishes —
- * later milestones (crossfade curves, EQ, tempo, effects) extend this
- * without changing how anchors themselves are represented.
+ * The transition plan is the shared representation that both the automatic
+ * transition generator and the future manual editor read from and write
+ * to. Keep it limited to what's actually established so far — later
+ * milestones (crossfade curves, EQ, effects) extend this without changing
+ * how anchors themselves are represented.
  */
 export interface TransitionPlan {
   songAAnchor: BeatAnchor | null;
   songBAnchor: BeatAnchor | null;
+  transitionBeats: typeof TRANSITION_BEATS;
 }

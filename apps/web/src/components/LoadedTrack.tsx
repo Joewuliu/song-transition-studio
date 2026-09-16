@@ -19,6 +19,7 @@ interface LoadedTrackProps {
   file: File;
   waveColor: string;
   progressColor: string;
+  onAnalysisChange: (analysis: TrackAnalysis | null) => void;
   anchor: BeatAnchor | null;
   onAnchorChange: (anchor: BeatAnchor | null) => void;
   onReplace: () => void;
@@ -29,6 +30,7 @@ export function LoadedTrack({
   file,
   waveColor,
   progressColor,
+  onAnalysisChange,
   anchor,
   onAnchorChange,
   onReplace,
@@ -37,23 +39,27 @@ export function LoadedTrack({
   // Reanalysis can shift/shorten the beats array. Keep the same beatIndex
   // if it's still in range (refreshing its timestamp), otherwise drop the
   // now-invalid anchor rather than leaving it pointing at a stale beat.
-  const revalidateAnchor = useCallback(
+  // Also mirrors the fresh result up to the parent (page-level state needs
+  // each song's BPM/beats to gate and drive transition rendering).
+  const handleAnalysisSuccess = useCallback(
     (result: TrackAnalysis) => {
-      if (!anchor) return;
-      if (anchor.beatIndex >= result.beats.length) {
-        onAnchorChange(null);
-        return;
+      if (anchor) {
+        if (anchor.beatIndex >= result.beats.length) {
+          onAnchorChange(null);
+        } else {
+          const refreshedTime = result.beats[anchor.beatIndex];
+          if (refreshedTime !== anchor.timeSeconds) {
+            onAnchorChange({ beatIndex: anchor.beatIndex, timeSeconds: refreshedTime });
+          }
+        }
       }
-      const refreshedTime = result.beats[anchor.beatIndex];
-      if (refreshedTime !== anchor.timeSeconds) {
-        onAnchorChange({ beatIndex: anchor.beatIndex, timeSeconds: refreshedTime });
-      }
+      onAnalysisChange(result);
     },
-    [anchor, onAnchorChange],
+    [anchor, onAnchorChange, onAnalysisChange],
   );
 
   const { state: analysisState, analyze } = useTrackAnalysis(file, {
-    onSuccess: revalidateAnchor,
+    onSuccess: handleAnalysisSuccess,
   });
 
   const beats =
