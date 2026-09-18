@@ -1,8 +1,6 @@
 "use client";
 
-import { formatTimestamp } from "@/lib/audio";
-import { toDisplayBeatNumber } from "@/lib/beats";
-import { ACCENT_STYLES } from "@/lib/trackAccent";
+import type { SuggestionInfo } from "@/context/StudioContext";
 import {
   BASS_SWAP_WIDTH_BEATS_OPTIONS,
   CROSSFADE_BIAS_MAX,
@@ -18,36 +16,7 @@ import {
   type TransitionPlan,
   type TransitionStyle,
 } from "@/lib/transitionPlan";
-import type { MusicalMode, PitchClass, TempoCompatibility } from "@/lib/api";
-import { TransitionCurveVisualization } from "@/components/TransitionCurveVisualization";
-
-export interface AnchorControlState {
-  selectedIndex: number | null;
-  selectedTime: number | null;
-  canSelectPrevious: boolean;
-  canSelectNext: boolean;
-  selectPrevious: () => void;
-  selectNext: () => void;
-}
-
-export interface SuggestionInfo {
-  tempoCompatibility: TempoCompatibility;
-  usedTempoNormalization: boolean;
-  songBRawBpm: number;
-  effectiveSongBBpm: number;
-  /** True once any plan field has been manually changed since this
-   * suggestion was applied. Only changes the banner's label — the
-   * underlying tempo-interpretation metadata stays visible either way. */
-  isEdited: boolean;
-  /** Local harmonic context around the *selected* anchors specifically —
-   * not the tracks' overall estimated key. Null local keys mean the
-   * signal there was too weak/ambiguous to trust. */
-  harmonicCompatibility: number;
-  songALocalKey: PitchClass | null;
-  songALocalMode: MusicalMode | null;
-  songBLocalKey: PitchClass | null;
-  songBLocalMode: MusicalMode | null;
-}
+import type { PitchClass, TempoCompatibility } from "@/lib/api";
 
 const TEMPO_COMPATIBILITY_LABEL: Record<TempoCompatibility, string> = {
   compatible: "great tempo match",
@@ -87,11 +56,9 @@ function harmonicMatchLabel(
   return "tense";
 }
 
-interface TransitionEditorProps {
+interface TransitionMixerProps {
   plan: TransitionPlan;
   suggestionInfo: SuggestionInfo | null;
-  songAAnchorControls: AnchorControlState;
-  songBAnchorControls: AnchorControlState;
   onTransitionBeatsChange: (beats: TransitionBeats) => void;
   onSongAGainChange: (db: number) => void;
   onSongBGainChange: (db: number) => void;
@@ -105,11 +72,14 @@ interface TransitionEditorProps {
   isMixAtDefaults: boolean;
 }
 
-export function TransitionEditor({
+/**
+ * The center column of the DJ workstation: every editable TransitionPlan
+ * control except the anchors themselves (Deck A/Deck B own those). Pure
+ * presentation over the shared workspace state — see StudioContext.
+ */
+export function TransitionMixer({
   plan,
   suggestionInfo,
-  songAAnchorControls,
-  songBAnchorControls,
   onTransitionBeatsChange,
   onSongAGainChange,
   onSongBGainChange,
@@ -121,15 +91,20 @@ export function TransitionEditor({
   onGenerate,
   isGenerating,
   isMixAtDefaults,
-}: TransitionEditorProps) {
+}: TransitionMixerProps) {
   return (
-    <section className="flex flex-col gap-6 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        Transition editor
+    <section className="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-black">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+        Mixer
       </h2>
 
-      {suggestionInfo && (
-        <div className="flex flex-col gap-1 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+      {/* Top: transition status — always present, so the mixer never
+          opens with an empty header regardless of how the plan got here. */}
+      {suggestionInfo ? (
+        <div
+          aria-live="polite"
+          className="flex flex-col gap-1 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
+        >
           <span className="font-medium text-zinc-700 dark:text-zinc-300">
             {suggestionInfo.isEdited ? "Edited suggestion" : "Suggested starting point"}{" "}
             — {TEMPO_COMPATIBILITY_LABEL[suggestionInfo.tempoCompatibility]}
@@ -159,59 +134,55 @@ export function TransitionEditor({
               </span>
             )}
         </div>
+      ) : (
+        <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">
+            Manual transition
+          </span>{" "}
+          — anchors selected by hand.
+        </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AnchorControl
-          label="Song A"
-          accentClassName={ACCENT_STYLES.violet.text}
-          {...songAAnchorControls}
+      {/* Middle: every editable mix control. */}
+      <div className="flex flex-col gap-6 border-t border-zinc-100 pt-6 dark:border-zinc-800">
+        <LengthSelector value={plan.transitionBeats} onChange={onTransitionBeatsChange} />
+
+        <TransitionStyleSelector
+          value={plan.transitionStyle}
+          onChange={onTransitionStyleChange}
         />
-        <AnchorControl
-          label="Song B"
-          accentClassName={ACCENT_STYLES.teal.text}
-          {...songBAnchorControls}
+
+        {plan.transitionStyle === "bass_swap" && (
+          <>
+            <BassSwapTimingSlider
+              position={plan.bassSwapPosition}
+              transitionBeats={plan.transitionBeats}
+              bassSwapWidthBeats={plan.bassSwapWidthBeats}
+              onChange={onBassSwapPositionChange}
+            />
+            <BassSwapWidthSelector
+              value={plan.bassSwapWidthBeats}
+              onChange={onBassSwapWidthChange}
+            />
+          </>
+        )}
+
+        <GainSlider
+          label="Song A level"
+          valueDb={plan.songAGainDb}
+          onChange={onSongAGainChange}
         />
+        <GainSlider
+          label="Song B level"
+          valueDb={plan.songBGainDb}
+          onChange={onSongBGainChange}
+        />
+
+        <BlendTimingSlider value={plan.crossfadeBias} onChange={onCrossfadeBiasChange} />
       </div>
 
-      <TransitionCurveVisualization plan={plan} />
-
-      <LengthSelector value={plan.transitionBeats} onChange={onTransitionBeatsChange} />
-
-      <TransitionStyleSelector
-        value={plan.transitionStyle}
-        onChange={onTransitionStyleChange}
-      />
-
-      {plan.transitionStyle === "bass_swap" && (
-        <>
-          <BassSwapTimingSlider
-            position={plan.bassSwapPosition}
-            transitionBeats={plan.transitionBeats}
-            bassSwapWidthBeats={plan.bassSwapWidthBeats}
-            onChange={onBassSwapPositionChange}
-          />
-          <BassSwapWidthSelector
-            value={plan.bassSwapWidthBeats}
-            onChange={onBassSwapWidthChange}
-          />
-        </>
-      )}
-
-      <GainSlider
-        label="Song A level"
-        valueDb={plan.songAGainDb}
-        onChange={onSongAGainChange}
-      />
-      <GainSlider
-        label="Song B level"
-        valueDb={plan.songBGainDb}
-        onChange={onSongBGainChange}
-      />
-
-      <BlendTimingSlider value={plan.crossfadeBias} onChange={onCrossfadeBiasChange} />
-
-      <div className="flex flex-wrap items-center gap-4">
+      {/* Bottom: reset and generate/regenerate. */}
+      <div className="flex flex-wrap items-center gap-4 border-t border-zinc-100 pt-6 dark:border-zinc-800">
         <button
           type="button"
           onClick={onResetMixSettings}
@@ -230,50 +201,6 @@ export function TransitionEditor({
         </button>
       </div>
     </section>
-  );
-}
-
-function AnchorControl({
-  label,
-  accentClassName,
-  selectedIndex,
-  selectedTime,
-  canSelectPrevious,
-  canSelectNext,
-  selectPrevious,
-  selectNext,
-}: AnchorControlState & { label: string; accentClassName: string }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className={`text-xs font-medium ${accentClassName}`}>
-        {label} anchor
-      </span>
-      <span className="text-sm text-zinc-700 dark:text-zinc-300">
-        {selectedIndex !== null && selectedTime !== null
-          ? `Beat ${toDisplayBeatNumber(selectedIndex)} · ${formatTimestamp(selectedTime)}`
-          : "No anchor selected"}
-      </span>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={selectPrevious}
-          disabled={!canSelectPrevious}
-          aria-label={`Select previous ${label} beat`}
-          className="rounded-full border border-zinc-300 px-2.5 py-1 text-xs text-zinc-600 transition-colors hover:border-zinc-400 disabled:opacity-30 dark:border-zinc-700 dark:text-zinc-300"
-        >
-          previous
-        </button>
-        <button
-          type="button"
-          onClick={selectNext}
-          disabled={!canSelectNext}
-          aria-label={`Select next ${label} beat`}
-          className="rounded-full border border-zinc-300 px-2.5 py-1 text-xs text-zinc-600 transition-colors hover:border-zinc-400 disabled:opacity-30 dark:border-zinc-700 dark:text-zinc-300"
-        >
-          next
-        </button>
-      </div>
-    </div>
   );
 }
 

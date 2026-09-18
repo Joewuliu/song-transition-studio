@@ -10,12 +10,12 @@ import math
 import os
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 import librosa
 import numpy as np
 
 from app.schemas import TrackAnalysis, TransitionCandidate
+from app.services.upload_validation import safe_temp_suffix
 
 HOP_LENGTH = 512
 
@@ -141,7 +141,7 @@ def analyze_audio(data: bytes, filename_hint: str = "") -> TrackAnalysis:
     `filename_hint` is only used to preserve a file suffix for the decoder;
     it is never used as a storage path.
     """
-    suffix = Path(filename_hint).suffix
+    suffix = safe_temp_suffix(filename_hint)
 
     fd, tmp_path = tempfile.mkstemp(suffix=suffix)
     try:

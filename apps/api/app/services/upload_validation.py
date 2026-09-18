@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
+from app.config import get_max_upload_bytes
+
 SUPPORTED_AUDIO_EXTENSIONS = {
     ".mp3",
     ".wav",
@@ -20,13 +22,35 @@ SUPPORTED_AUDIO_EXTENSIONS = {
     ".weba",
 }
 
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB, generous for a local track
+# Read in bounded chunks (rather than a single file.read()) so an
+# oversized upload is rejected as soon as the configured limit is
+# crossed, instead of after the whole body has already been buffered
+# into memory — see get_max_upload_bytes() in app/config.py. /transitions/
+# render accepts TWO uploads in one request, so worst-case per-request
+# memory is roughly twice the per-file limit even with this bound.
+_READ_CHUNK_BYTES = 1024 * 1024  # 1 MB
+
+# Bounds the suffix used for a temp file derived from an uploaded
+# filename (see safe_temp_suffix). looks_like_audio already requires
+# either an audio/* content type or a short known extension, but content
+# type is attacker-controlled, so this stays as cheap defense-in-depth
+# against a degenerate filename producing an OS-level "name too long"
+# error instead of a clean, handled response.
+_MAX_TEMP_SUFFIX_LENGTH = 16
 
 
 def looks_like_audio(filename: str, content_type: str | None) -> bool:
     if content_type and content_type.startswith("audio/"):
         return True
     return Path(filename).suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+
+
+def safe_temp_suffix(filename: str) -> str:
+    """A short, filesystem-safe suffix for a temp file derived from an
+    uploaded filename. `Path.suffix` already strips any directory
+    component (no path-traversal risk from a hostile filename); this
+    additionally length-bounds it."""
+    return Path(filename).suffix[:_MAX_TEMP_SUFFIX_LENGTH]
 
 
 async def read_validated_upload(file: UploadFile, *, label: str) -> bytes:
@@ -41,12 +65,25 @@ async def read_validated_upload(file: UploadFile, *, label: str) -> bytes:
             detail=f'"{file.filename}" is not a supported audio file.',
         )
 
-    data = await file.read()
+    max_bytes = get_max_upload_bytes()
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            limit_mb = max_bytes // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"{label} file is too large (limit is {limit_mb} MB).",
+            )
+        chunks.append(chunk)
+
+    data = b"".join(chunks)
 
     if not data:
         raise HTTPException(status_code=400, detail=f"{label} file is empty.")
-
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail=f"{label} file is too large.")
 
     return data

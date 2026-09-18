@@ -7,6 +7,10 @@ interface UseWaveSurferOptions {
   file: File;
   waveColor: string;
   progressColor: string;
+  /** Pixel height of the rendered waveform; defaults to 96 (the compact
+   * setup-page size) — callers wanting a larger, deck-style waveform can
+   * pass a bigger value without affecting other call sites. */
+  height?: number;
   /** Called with the clicked/dragged-to time whenever the user seeks. */
   onSeek?: (timeSeconds: number) => void;
 }
@@ -16,6 +20,10 @@ interface UseWaveSurferResult {
   isReady: boolean;
   isPlaying: boolean;
   duration: number;
+  /** Current playback position, in seconds — the same underlying
+   * WaveSurfer instance's own position (via its "timeupdate" event),
+   * never a second, independently-tracked playback clock. */
+  currentTime: number;
   error: string | null;
   togglePlay: () => void;
 }
@@ -34,6 +42,7 @@ export function useWaveSurfer({
   file,
   waveColor,
   progressColor,
+  height = 96,
   onSeek,
 }: UseWaveSurferOptions): UseWaveSurferResult {
   const wavesurferRef = useRef<WaveSurfer | null>(null);
@@ -41,6 +50,7 @@ export function useWaveSurfer({
   const [isReady, setIsReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // Kept in a ref (rather than a WaveSurfer-effect dependency) so a new
@@ -61,7 +71,7 @@ export function useWaveSurfer({
       waveColor,
       progressColor,
       cursorColor: progressColor,
-      height: 96,
+      height,
       barWidth: 2,
       barGap: 1,
       barRadius: 2,
@@ -72,6 +82,7 @@ export function useWaveSurfer({
 
     const handleReady = (readyDuration: number) => {
       setDuration(readyDuration);
+      setCurrentTime(0);
       setIsReady(true);
     };
     const handlePlay = () => setIsPlaying(true);
@@ -84,6 +95,10 @@ export function useWaveSurfer({
     const handleInteraction = (newTime: number) => {
       onSeekRef.current?.(newTime);
     };
+    // Fires continuously during playback and immediately after a seek —
+    // the same single source of truth for "where is playback right now"
+    // that WaveSurfer's own cursor already reflects visually.
+    const handleTimeUpdate = (time: number) => setCurrentTime(time);
 
     wavesurfer.on("ready", handleReady);
     wavesurfer.on("play", handlePlay);
@@ -91,6 +106,7 @@ export function useWaveSurfer({
     wavesurfer.on("finish", handleFinish);
     wavesurfer.on("error", handleError);
     wavesurfer.on("interaction", handleInteraction);
+    wavesurfer.on("timeupdate", handleTimeUpdate);
 
     return () => {
       wavesurfer.unAll();
@@ -102,11 +118,19 @@ export function useWaveSurfer({
       wavesurferRef.current = null;
       URL.revokeObjectURL(url);
     };
-  }, [container, file, waveColor, progressColor]);
+  }, [container, file, waveColor, progressColor, height]);
 
   const togglePlay = () => {
     void wavesurferRef.current?.playPause();
   };
 
-  return { containerRef: setContainer, isReady, isPlaying, duration, error, togglePlay };
+  return {
+    containerRef: setContainer,
+    isReady,
+    isPlaying,
+    duration,
+    currentTime,
+    error,
+    togglePlay,
+  };
 }

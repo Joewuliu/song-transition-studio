@@ -1,20 +1,22 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { BackendStatus } from "@/components/BackendStatus";
-import { TrackSlot } from "@/components/TrackSlot";
-import { TransitionAnchorSummary } from "@/components/TransitionAnchorSummary";
-import { TransitionEditor, type SuggestionInfo } from "@/components/TransitionEditor";
-import { TransitionOptionsPanel } from "@/components/TransitionOptionsPanel";
-import { TransitionPreviewPanel } from "@/components/TransitionPreviewPanel";
-import { WorkflowProgress } from "@/components/WorkflowProgress";
-import { useBeatAnchorControls } from "@/hooks/useBeatAnchorControls";
-import { useTransitionPreview } from "@/hooks/useTransitionPreview";
-import { useTransitionSuggestion } from "@/hooks/useTransitionSuggestion";
-import { useVariantPreview } from "@/hooks/useVariantPreview";
-import { EMPTY_BEATS } from "@/lib/beats";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useTransitionPreview, type TransitionPreviewState } from "@/hooks/useTransitionPreview";
+import {
+  useTransitionSuggestion,
+  type TransitionSuggestionState,
+} from "@/hooks/useTransitionSuggestion";
+import { useVariantPreview, type VariantPreviewState } from "@/hooks/useVariantPreview";
 import { defaultExportFilename } from "@/lib/export";
-import type { TrackAnalysis, TransitionSuggestion, TransitionVariant } from "@/lib/api";
+import type {
+  MusicalMode,
+  PitchClass,
+  TempoCompatibility,
+  TrackAnalysis,
+  TransitionSuggestion,
+  TransitionVariant,
+} from "@/lib/api";
 import {
   DEFAULT_MIX_SETTINGS,
   DEFAULT_SONG_B_TEMPO_MULTIPLIER,
@@ -29,16 +31,84 @@ import {
   type TransitionStyle,
 } from "@/lib/transitionPlan";
 
-export default function Home() {
+/** Everything the editor's suggestion banner needs, resolved from
+ * whichever suggestion the CURRENT plan was actually adopted from — see
+ * `adoptedSuggestion` below. Kept separate from the raw API shape so the
+ * mixer never needs to know about internal field names like
+ * `crossfadeBias`/`songBTempoMultiplier`. */
+export interface SuggestionInfo {
+  tempoCompatibility: TempoCompatibility;
+  usedTempoNormalization: boolean;
+  songBRawBpm: number;
+  effectiveSongBBpm: number;
+  isEdited: boolean;
+  harmonicCompatibility: number;
+  songALocalKey: PitchClass | null;
+  songALocalMode: MusicalMode | null;
+  songBLocalKey: PitchClass | null;
+  songBLocalMode: MusicalMode | null;
+}
+
+interface StudioContextValue {
+  songAFile: File | null;
+  songBFile: File | null;
+  songAAnalysis: TrackAnalysis | null;
+  songBAnalysis: TrackAnalysis | null;
+  onSongAFileChange: (file: File | null) => void;
+  onSongAAnalysisChange: (analysis: TrackAnalysis | null) => void;
+  onSongBFileChange: (file: File | null) => void;
+  onSongBAnalysisChange: (analysis: TrackAnalysis | null) => void;
+
+  transitionPlan: TransitionPlan;
+  onSongAAnchorChange: (anchor: BeatAnchor | null) => void;
+  onSongBAnchorChange: (anchor: BeatAnchor | null) => void;
+  onTransitionBeatsChange: (beats: TransitionBeats) => void;
+  onSongAGainChange: (db: number) => void;
+  onSongBGainChange: (db: number) => void;
+  onCrossfadeBiasChange: (bias: number) => void;
+  onResetMixSettings: () => void;
+  onTransitionStyleChange: (style: TransitionStyle) => void;
+  onBassSwapPositionChange: (position: number) => void;
+  onBassSwapWidthChange: (width: BassSwapWidthBeats) => void;
+  isMixAtDefaults: boolean;
+
+  canSuggest: boolean;
+  suggestionState: TransitionSuggestionState;
+  onFindTransitions: () => void;
+  variantPreviewState: VariantPreviewState;
+  onPreviewVariant: (variant: TransitionVariant) => void;
+  /** Adopts the variant into the editable plan AND navigates to /editor —
+   * "Use in editor" is the only caller. */
+  onUseInEditor: (variant: TransitionVariant) => void;
+  suggestionInfo: SuggestionInfo | null;
+
+  canGenerate: boolean;
+  previewState: TransitionPreviewState;
+  isPreviewFreshAndExportable: boolean;
+  onGenerate: () => void;
+  defaultFilename: string;
+}
+
+const StudioContext = createContext<StudioContextValue | null>(null);
+
+/**
+ * Owns every piece of workspace state that both / (setup) and /editor
+ * (workstation) need — source files, their analyses, the editable
+ * TransitionPlan, suggestion/variant state, and preview/export state.
+ * Mounted once in the (studio) route group's layout, so this instance
+ * (and everything in it) survives client-side navigation between the two
+ * pages: nothing here is duplicated per-page, and nothing is persisted
+ * beyond memory (no URL params, no localStorage) — a full reload always
+ * starts fresh, by design (see the /editor recovery state).
+ */
+export function StudioProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
+
   const [songAFile, setSongAFile] = useState<File | null>(null);
   const [songAAnalysis, setSongAAnalysis] = useState<TrackAnalysis | null>(null);
-
   const [songBFile, setSongBFile] = useState<File | null>(null);
   const [songBAnalysis, setSongBAnalysis] = useState<TrackAnalysis | null>(null);
 
-  // The authoritative editor state: anchors plus every mix parameter the
-  // editor (or a suggestion) controls. Always updated immutably (spread
-  // into a new object), via the narrow helpers below.
   const [transitionPlan, setTransitionPlan] = useState<TransitionPlan>(
     createInitialTransitionPlan(),
   );
@@ -52,8 +122,7 @@ export default function Home() {
   const [isSuggestionEdited, setIsSuggestionEdited] = useState(false);
 
   // Low-level: mutate the plan and mark the preview stale, without
-  // touching suggestion-edited tracking. Used both by applySuggestion
-  // (which explicitly resets that flag itself) and by updatePlan below.
+  // touching suggestion-edited tracking.
   const applyPlanUpdate = useCallback(
     (updater: (plan: TransitionPlan) => TransitionPlan) => {
       setTransitionPlan(updater);
@@ -77,16 +146,16 @@ export default function Home() {
   const suggestion = useTransitionSuggestion();
   const variantPreview = useVariantPreview();
 
-  // The suggestion whose variant was most recently adopted into the editor
-  // — distinct from `suggestion.state`, which just tracks the latest
-  // /transitions/suggest fetch (options can be fetched again without
-  // disturbing whatever was already adopted into the editable plan).
+  // The suggestion whose variant was most recently adopted into the
+  // editor — distinct from `suggestion.state`, which just tracks the
+  // latest /transitions/suggest fetch (options can be fetched again
+  // without disturbing whatever was already adopted into the plan).
   const [adoptedSuggestion, setAdoptedSuggestion] = useState<TransitionSuggestion | null>(
     null,
   );
 
-  // The single centralized place a TransitionVariant's plan is copied into
-  // the editable TransitionPlan — "Use in editor" is the only caller.
+  // The single centralized place a TransitionVariant's plan is copied
+  // into the editable TransitionPlan.
   const applyVariant = useCallback(
     (adopted: TransitionSuggestion, variant: TransitionVariant) => {
       applyPlanUpdate(() => ({
@@ -111,15 +180,16 @@ export default function Home() {
     [applyPlanUpdate, variantPreview],
   );
 
-  const handleUseInEditor = useCallback(
+  const onUseInEditor = useCallback(
     (variant: TransitionVariant) => {
       if (suggestion.state.status !== "success") return;
       applyVariant(suggestion.state.suggestion, variant);
+      router.push("/editor");
     },
-    [suggestion.state, applyVariant],
+    [suggestion.state, applyVariant, router],
   );
 
-  const handlePreviewVariant = useCallback(
+  const onPreviewVariant = useCallback(
     (variant: TransitionVariant) => {
       if (!songAFile || !songAAnalysis || !songBFile || !songBAnalysis) return;
       variantPreview.previewVariant({
@@ -134,8 +204,8 @@ export default function Home() {
   );
 
   // Clears suggestion/adoption metadata (and the edited flag) together —
-  // used whenever a track's file/analysis changes, since none of it still
-  // describes the current inputs.
+  // used whenever a track's file/analysis changes, since none of it
+  // still describes the current inputs.
   const clearSuggestion = useCallback(() => {
     suggestion.clear();
     variantPreview.reset();
@@ -155,13 +225,21 @@ export default function Home() {
     clearSuggestion();
   }, [preview, clearSuggestion]);
 
-  const handleSongAFileChange = useCallback(
+  const onSongAFileChange = useCallback(
     (file: File | null) => {
       setSongAFile(file);
       resetPlanForNewTrackPair();
     },
     [resetPlanForNewTrackPair],
   );
+  const onSongBFileChange = useCallback(
+    (file: File | null) => {
+      setSongBFile(file);
+      resetPlanForNewTrackPair();
+    },
+    [resetPlanForNewTrackPair],
+  );
+
   // Re-analyzing the SAME file is lighter-weight: it must invalidate the
   // preview and any suggestion/variant/adopted metadata (none of it still
   // describes the fresh analysis), but must NOT reset mix settings or the
@@ -169,11 +247,11 @@ export default function Home() {
   // track's own anchor beforehand (see its handleAnalysisSuccess) using
   // the updated beats array, which this deliberately leaves untouched.
   //
-  // songBTempoMultiplier is the one plan field that's an exception:
-  // it's derived from the BPM *relationship* between both analyses, not a
-  // user-facing mix control, so it's reset to 1 here rather than preserved
-  // — a stale multiplier could silently misdescribe the new BPM(s). "Find
-  // transitions" can choose the correct multiplier again from there.
+  // songBTempoMultiplier is the one plan field that's an exception: it's
+  // derived from the BPM *relationship* between both analyses, not a
+  // user-facing mix control, so it's reset to 1 here rather than
+  // preserved — a stale multiplier could silently misdescribe the new
+  // BPM(s). "Find transitions" can choose the correct multiplier again.
   const invalidateTempoMultiplier = useCallback(() => {
     setTransitionPlan((plan) => ({
       ...plan,
@@ -181,7 +259,7 @@ export default function Home() {
     }));
   }, []);
 
-  const handleSongAAnalysisChange = useCallback(
+  const onSongAAnalysisChange = useCallback(
     (analysis: TrackAnalysis | null) => {
       setSongAAnalysis(analysis);
       invalidateTempoMultiplier();
@@ -190,14 +268,7 @@ export default function Home() {
     },
     [invalidateTempoMultiplier, preview, clearSuggestion],
   );
-  const handleSongBFileChange = useCallback(
-    (file: File | null) => {
-      setSongBFile(file);
-      resetPlanForNewTrackPair();
-    },
-    [resetPlanForNewTrackPair],
-  );
-  const handleSongBAnalysisChange = useCallback(
+  const onSongBAnalysisChange = useCallback(
     (analysis: TrackAnalysis | null) => {
       setSongBAnalysis(analysis);
       invalidateTempoMultiplier();
@@ -208,9 +279,9 @@ export default function Home() {
   );
 
   // An anchor becoming null only happens when its track is replaced or
-  // removed (TrackSlot's own doing) — that's a full invalidation, not an
-  // edit. An anchor becoming a real value is a genuine, stale-marking edit.
-  const handleSongAAnchorChange = useCallback(
+  // removed — that's a full invalidation, not an edit. An anchor
+  // becoming a real value is a genuine, stale-marking edit.
+  const onSongAAnchorChange = useCallback(
     (anchor: BeatAnchor | null) => {
       if (anchor === null) {
         setTransitionPlan((plan) => ({ ...plan, songAAnchor: null }));
@@ -221,7 +292,7 @@ export default function Home() {
     },
     [preview, updatePlan],
   );
-  const handleSongBAnchorChange = useCallback(
+  const onSongBAnchorChange = useCallback(
     (anchor: BeatAnchor | null) => {
       if (anchor === null) {
         setTransitionPlan((plan) => ({ ...plan, songBAnchor: null }));
@@ -233,7 +304,7 @@ export default function Home() {
     [preview, updatePlan],
   );
 
-  const handleTransitionBeatsChange = useCallback(
+  const onTransitionBeatsChange = useCallback(
     (beats: TransitionBeats) => {
       updatePlan((plan) => ({
         ...plan,
@@ -250,35 +321,35 @@ export default function Home() {
     },
     [updatePlan],
   );
-  const handleSongAGainChange = useCallback(
+  const onSongAGainChange = useCallback(
     (db: number) => {
       updatePlan((plan) => ({ ...plan, songAGainDb: clampGainDb(db) }));
     },
     [updatePlan],
   );
-  const handleSongBGainChange = useCallback(
+  const onSongBGainChange = useCallback(
     (db: number) => {
       updatePlan((plan) => ({ ...plan, songBGainDb: clampGainDb(db) }));
     },
     [updatePlan],
   );
-  const handleCrossfadeBiasChange = useCallback(
+  const onCrossfadeBiasChange = useCallback(
     (bias: number) => {
       updatePlan((plan) => ({ ...plan, crossfadeBias: clampCrossfadeBias(bias) }));
     },
     [updatePlan],
   );
-  const handleResetMixSettings = useCallback(() => {
+  const onResetMixSettings = useCallback(() => {
     updatePlan((plan) => ({ ...plan, ...DEFAULT_MIX_SETTINGS }));
   }, [updatePlan]);
 
-  const handleTransitionStyleChange = useCallback(
+  const onTransitionStyleChange = useCallback(
     (style: TransitionStyle) => {
       updatePlan((plan) => ({ ...plan, transitionStyle: style }));
     },
     [updatePlan],
   );
-  const handleBassSwapPositionChange = useCallback(
+  const onBassSwapPositionChange = useCallback(
     (position: number) => {
       updatePlan((plan) => ({
         ...plan,
@@ -291,7 +362,7 @@ export default function Home() {
     },
     [updatePlan],
   );
-  const handleBassSwapWidthChange = useCallback(
+  const onBassSwapWidthChange = useCallback(
     (width: BassSwapWidthBeats) => {
       updatePlan((plan) => ({
         ...plan,
@@ -310,22 +381,6 @@ export default function Home() {
     [updatePlan],
   );
 
-  const songABeats = songAAnalysis?.beats ?? EMPTY_BEATS;
-  const songBBeats = songBAnalysis?.beats ?? EMPTY_BEATS;
-
-  // Same underlying anchor value as the waveform's click-to-seek — this
-  // just gives the editor its own previous/next controls over it.
-  const songAAnchorControls = useBeatAnchorControls({
-    beats: songABeats,
-    anchor: transitionPlan.songAAnchor,
-    onAnchorChange: handleSongAAnchorChange,
-  });
-  const songBAnchorControls = useBeatAnchorControls({
-    beats: songBBeats,
-    anchor: transitionPlan.songBAnchor,
-    onAnchorChange: handleSongBAnchorChange,
-  });
-
   const canSuggest = songAAnalysis !== null && songBAnalysis !== null;
 
   const canGenerate =
@@ -342,9 +397,9 @@ export default function Home() {
   const isPreviewFreshAndExportable =
     preview.state.status === "success" && !preview.state.isStale;
 
-  // Deliberately excludes songBTempoMultiplier — it isn't a "mix setting"
-  // Reset touches (see its doc comment in transitionPlan.ts), so it must
-  // not affect whether the Reset button reads as already-at-defaults.
+  // Deliberately excludes songBTempoMultiplier — it isn't a "mix
+  // setting" Reset touches, so it must not affect whether the Reset
+  // button reads as already-at-defaults.
   const isMixAtDefaults =
     transitionPlan.transitionBeats === DEFAULT_MIX_SETTINGS.transitionBeats &&
     transitionPlan.songAGainDb === DEFAULT_MIX_SETTINGS.songAGainDb &&
@@ -354,13 +409,13 @@ export default function Home() {
     transitionPlan.bassSwapPosition === DEFAULT_MIX_SETTINGS.bassSwapPosition &&
     transitionPlan.bassSwapWidthBeats === DEFAULT_MIX_SETTINGS.bassSwapWidthBeats;
 
-  const handleFindTransitions = () => {
+  const onFindTransitions = useCallback(() => {
     if (!canSuggest || suggestion.state.status === "suggesting") return;
     if (!songAAnalysis || !songBAnalysis) return;
     suggestion.suggest(songAAnalysis, songBAnalysis);
-  };
+  }, [canSuggest, suggestion, songAAnalysis, songBAnalysis]);
 
-  const handleGenerate = () => {
+  const onGenerate = useCallback(() => {
     if (
       !canGenerate ||
       preview.state.status === "generating" ||
@@ -390,7 +445,7 @@ export default function Home() {
       bassSwapPosition: transitionPlan.bassSwapPosition,
       bassSwapWidthBeats: transitionPlan.bassSwapWidthBeats,
     });
-  };
+  }, [canGenerate, preview, songAFile, songAAnalysis, songBFile, songBAnalysis, transitionPlan]);
 
   // Reflects whichever suggestion the CURRENT editable plan was actually
   // adopted from — not necessarily the latest /transitions/suggest fetch,
@@ -412,97 +467,56 @@ export default function Home() {
         }
       : null;
 
-  return (
-    <div className="flex flex-1 flex-col bg-white dark:bg-black">
-      <header className="flex flex-col gap-4 px-8 py-8 sm:px-12">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Song Transition Studio
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Add two local audio tracks to get started. Files stay on your
-              device until you analyze or preview them.
-            </p>
-          </div>
-          <div className="origin-top-right scale-90 opacity-60">
-            <BackendStatus />
-          </div>
-        </div>
-        <WorkflowProgress
-          tracksAdded={songAFile !== null && songBFile !== null}
-          bothAnalyzed={songAAnalysis !== null && songBAnalysis !== null}
-          transitionChosen={canGenerate}
-          exportReady={isPreviewFreshAndExportable}
-        />
-      </header>
-
-      <main className="flex flex-1 flex-col gap-12 px-8 pb-20 sm:px-12">
-        <TrackSlot
-          label="Song A"
-          accent="violet"
-          file={songAFile}
-          onFileChange={handleSongAFileChange}
-          onAnalysisChange={handleSongAAnalysisChange}
-          anchor={transitionPlan.songAAnchor}
-          onAnchorChange={handleSongAAnchorChange}
-        />
-        <TrackSlot
-          label="Song B"
-          accent="teal"
-          file={songBFile}
-          onFileChange={handleSongBFileChange}
-          onAnalysisChange={handleSongBAnalysisChange}
-          anchor={transitionPlan.songBAnchor}
-          onAnchorChange={handleSongBAnchorChange}
-        />
-        {(songAFile === null) !== (songBFile === null) && (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Add {songAFile === null ? "Song A" : "Song B"} to continue.
-          </p>
-        )}
-
-        {canSuggest && (
-          <TransitionOptionsPanel
-            suggestionState={suggestion.state}
-            onFindTransitions={handleFindTransitions}
-            variantPreviewState={variantPreview.state}
-            onPreviewVariant={handlePreviewVariant}
-            onUseInEditor={handleUseInEditor}
-          />
-        )}
-
-        <TransitionAnchorSummary plan={transitionPlan} />
-
-        {canGenerate && (
-          <TransitionEditor
-            plan={transitionPlan}
-            suggestionInfo={suggestionInfo}
-            songAAnchorControls={songAAnchorControls}
-            songBAnchorControls={songBAnchorControls}
-            onTransitionBeatsChange={handleTransitionBeatsChange}
-            onSongAGainChange={handleSongAGainChange}
-            onSongBGainChange={handleSongBGainChange}
-            onCrossfadeBiasChange={handleCrossfadeBiasChange}
-            onTransitionStyleChange={handleTransitionStyleChange}
-            onBassSwapPositionChange={handleBassSwapPositionChange}
-            onBassSwapWidthChange={handleBassSwapWidthChange}
-            onResetMixSettings={handleResetMixSettings}
-            onGenerate={handleGenerate}
-            isGenerating={preview.state.status === "generating"}
-            isMixAtDefaults={isMixAtDefaults}
-          />
-        )}
-
-        <TransitionPreviewPanel
-          state={preview.state}
-          onRegenerate={handleGenerate}
-          defaultFilename={defaultExportFilename(
-            songAFile?.name ?? "song-a",
-            songBFile?.name ?? "song-b",
-          )}
-        />
-      </main>
-    </div>
+  const defaultFilename = defaultExportFilename(
+    songAFile?.name ?? "song-a",
+    songBFile?.name ?? "song-b",
   );
+
+  const value: StudioContextValue = {
+    songAFile,
+    songBFile,
+    songAAnalysis,
+    songBAnalysis,
+    onSongAFileChange,
+    onSongAAnalysisChange,
+    onSongBFileChange,
+    onSongBAnalysisChange,
+
+    transitionPlan,
+    onSongAAnchorChange,
+    onSongBAnchorChange,
+    onTransitionBeatsChange,
+    onSongAGainChange,
+    onSongBGainChange,
+    onCrossfadeBiasChange,
+    onResetMixSettings,
+    onTransitionStyleChange,
+    onBassSwapPositionChange,
+    onBassSwapWidthChange,
+    isMixAtDefaults,
+
+    canSuggest,
+    suggestionState: suggestion.state,
+    onFindTransitions,
+    variantPreviewState: variantPreview.state,
+    onPreviewVariant,
+    onUseInEditor,
+    suggestionInfo,
+
+    canGenerate,
+    previewState: preview.state,
+    isPreviewFreshAndExportable,
+    onGenerate,
+    defaultFilename,
+  };
+
+  return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>;
+}
+
+export function useStudio(): StudioContextValue {
+  const context = useContext(StudioContext);
+  if (context === null) {
+    throw new Error("useStudio must be used within a StudioProvider");
+  }
+  return context;
 }

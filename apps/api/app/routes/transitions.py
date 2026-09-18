@@ -1,6 +1,6 @@
+import asyncio
 import os
 import tempfile
-from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
@@ -20,7 +20,7 @@ from app.services.transition_planner import (
     suggest_transition_plan,
 )
 from app.services.transition_renderer import TransitionRenderError, render_transition
-from app.services.upload_validation import read_validated_upload
+from app.services.upload_validation import read_validated_upload, safe_temp_suffix
 
 router = APIRouter(prefix="/transitions", tags=["transitions"])
 
@@ -44,10 +44,19 @@ async def render_transition_preview(
     song_a_tmp: str | None = None
     song_b_tmp: str | None = None
     try:
-        song_a_tmp = _write_temp_file(song_a_data, Path(song_a.filename or "").suffix)
-        song_b_tmp = _write_temp_file(song_b_data, Path(song_b.filename or "").suffix)
+        song_a_tmp = _write_temp_file(
+            song_a_data, safe_temp_suffix(song_a.filename or "")
+        )
+        song_b_tmp = _write_temp_file(
+            song_b_data, safe_temp_suffix(song_b.filename or "")
+        )
 
-        result = render_transition(
+        # render_transition is a plain synchronous, CPU-heavy call
+        # (resampling, phase-vocoder time-stretching, filtering) — see the
+        # same note in routes/tracks.py. Offloading it keeps the event
+        # loop free for other requests while this one renders.
+        result = await asyncio.to_thread(
+            render_transition,
             song_a_path=song_a_tmp,
             song_b_path=song_b_tmp,
             song_a_anchor_seconds=parsed_plan.song_a_anchor.time_seconds,
