@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Deck } from "@/components/Deck";
+import { ArrowLeftIcon } from "@/components/icons";
 import { TransitionAnchorSummary } from "@/components/TransitionAnchorSummary";
 import { TransitionCurveVisualization } from "@/components/TransitionCurveVisualization";
 import { TransitionMixer } from "@/components/TransitionMixer";
@@ -10,10 +11,12 @@ import { TransitionPreviewPanel } from "@/components/TransitionPreviewPanel";
 import { useStudio } from "@/context/StudioContext";
 
 /**
- * The DJ-style transition workstation: Deck A / Mixer / Deck B, then the
- * enlarged transition visualization, then preview/export. Everything
- * here reads from and writes to the same StudioContext the setup page
- * uses — nothing is re-implemented, only laid out differently.
+ * The transition workstation. A stage (Deck A and Deck B side by side,
+ * the transition curve, then preview and export) sits beside a sticky
+ * inspector of every mix control. Everything reads from and writes to
+ * the same StudioContext the setup page uses — nothing is re-implemented,
+ * only presented. Below the wide-desktop breakpoint the sections stack:
+ * decks, inspector, transition, preview.
  */
 export default function EditorPage() {
   const {
@@ -38,6 +41,7 @@ export default function EditorPage() {
     onResetMixSettings,
     onGenerate,
     isMixAtDefaults,
+    isPreviewFreshAndExportable,
     suggestionInfo,
     canGenerate,
     previewState,
@@ -89,27 +93,17 @@ export default function EditorPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-white dark:bg-black">
-      <header className="flex items-center justify-between gap-4 px-8 py-6 sm:px-12">
-        <Link
-          href="/"
-          className="text-sm text-zinc-500 underline-offset-4 hover:underline dark:text-zinc-400"
-        >
-          ← Back to tracks
+    <div className="editor-theme flex flex-1 flex-col bg-ed-canvas font-sans text-ed-text">
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-1 px-4 py-4 sm:px-6">
+        <Link href="/" className="ed-btn-ghost -ml-2 text-[13px]">
+          <ArrowLeftIcon className="size-4" />
+          Back to tracks
         </Link>
+        <h1 className="text-sm font-medium text-ed-muted">Transition editor</h1>
       </header>
 
-      <main className="flex flex-1 flex-col gap-8 px-4 pb-20 sm:px-8">
-        {/* DOM order is Deck A, Deck B, Mixer so mobile (single column,
-            no order overrides apply) stacks exactly as specified: Deck A,
-            Deck B, Mixer. At lg+, Deck B is pushed after the Mixer via
-            `lg:order-3` (Deck A and the Mixer, both left at the default
-            order, keep their DOM order — Deck A before Mixer — giving
-            the desired Deck A | Mixer | Deck B composition). The Mixer's
-            column is intentionally a touch narrower than the decks at
-            desktop width (a real workstation's center strip usually is)
-            via the lg-only column-width override on the grid itself. */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[1fr_0.85fr_1fr]">
+      <main className="grid grid-cols-1 content-start gap-4 px-4 pb-16 sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,28%)] xl:gap-5">
+        <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:col-start-1 xl:row-start-1">
           <Deck
             deckLabel="Deck A"
             accent="violet"
@@ -120,53 +114,60 @@ export default function EditorPage() {
             anchor={transitionPlan.songAAnchor}
             onAnchorChange={onSongAAnchorChange}
           />
-          <div className="lg:order-3">
-            <Deck
-              deckLabel="Deck B"
-              accent="teal"
-              file={songBFile}
-              analysis={songBAnalysis}
-              onFileChange={onSongBFileChange}
-              onAnalysisChange={onSongBAnalysisChange}
-              anchor={transitionPlan.songBAnchor}
-              onAnchorChange={onSongBAnchorChange}
-            />
-          </div>
-          <div className="md:col-span-2 lg:col-span-1">
-            <TransitionMixer
-              plan={transitionPlan}
-              suggestionInfo={suggestionInfo}
-              onTransitionBeatsChange={onTransitionBeatsChange}
-              onSongAGainChange={onSongAGainChange}
-              onSongBGainChange={onSongBGainChange}
-              onCrossfadeBiasChange={onCrossfadeBiasChange}
-              onTransitionStyleChange={onTransitionStyleChange}
-              onBassSwapPositionChange={onBassSwapPositionChange}
-              onBassSwapWidthChange={onBassSwapWidthChange}
-              onResetMixSettings={onResetMixSettings}
-              onGenerate={onGenerate}
-              isGenerating={previewState.status === "generating"}
-              isMixAtDefaults={isMixAtDefaults}
-            />
-          </div>
+          <Deck
+            deckLabel="Deck B"
+            accent="teal"
+            file={songBFile}
+            analysis={songBAnalysis}
+            onFileChange={onSongBFileChange}
+            onAnalysisChange={onSongBAnalysisChange}
+            anchor={transitionPlan.songBAnchor}
+            onAnchorChange={onSongBAnchorChange}
+          />
         </div>
 
-        <TransitionAnchorSummary plan={transitionPlan} />
+        <div className="min-w-0 rounded-2xl xl:sticky xl:top-4 xl:col-start-2 xl:row-span-3 xl:row-start-1 xl:max-h-[calc(100dvh-2rem)] xl:scroll-pb-28 xl:self-start xl:overflow-y-auto xl:overscroll-contain">
+          <TransitionMixer
+            plan={transitionPlan}
+            suggestionInfo={suggestionInfo}
+            onTransitionBeatsChange={onTransitionBeatsChange}
+            onSongAGainChange={onSongAGainChange}
+            onSongBGainChange={onSongBGainChange}
+            onCrossfadeBiasChange={onCrossfadeBiasChange}
+            onTransitionStyleChange={onTransitionStyleChange}
+            onBassSwapPositionChange={onBassSwapPositionChange}
+            onBassSwapWidthChange={onBassSwapWidthChange}
+            onResetMixSettings={onResetMixSettings}
+            onGenerate={onGenerate}
+            previewStatus={previewState.status}
+            hasFreshPreview={isPreviewFreshAndExportable}
+            isMixAtDefaults={isMixAtDefaults}
+          />
+        </div>
 
-        <section className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-zinc-50/60 p-6 dark:border-zinc-800 dark:bg-zinc-950/40">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
-            Transition visualization
-          </h2>
-          <div className="mx-auto w-full max-w-3xl">
-            <TransitionCurveVisualization plan={transitionPlan} />
+        <section
+          aria-labelledby="transition-heading"
+          className="flex min-w-0 flex-col gap-4 rounded-2xl bg-ed-surface p-4 sm:p-5 xl:col-start-1 xl:row-start-2"
+        >
+          <div>
+            <h2 id="transition-heading" className="text-sm font-semibold text-ed-strong">
+              Transition
+            </h2>
+            <p className="mt-1 text-[13px] text-ed-muted">
+              Song A fades out as Song B fades in, aligned at the two anchors.
+            </p>
           </div>
+          <TransitionCurveVisualization plan={transitionPlan} />
+          <TransitionAnchorSummary plan={transitionPlan} />
         </section>
 
-        <TransitionPreviewPanel
-          state={previewState}
-          onRegenerate={onGenerate}
-          defaultFilename={defaultFilename}
-        />
+        <div className="min-w-0 xl:col-start-1 xl:row-start-3">
+          <TransitionPreviewPanel
+            state={previewState}
+            onRegenerate={onGenerate}
+            defaultFilename={defaultFilename}
+          />
+        </div>
       </main>
     </div>
   );
@@ -182,13 +183,10 @@ function RecoveryNotice({
   linkLabel: string;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 py-20 text-center">
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">{message}</p>
-      {detail && <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-500">{detail}</p>}
-      <Link
-        href="/"
-        className="mt-1 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
-      >
+    <div className="editor-theme flex flex-1 flex-col items-center justify-center gap-3 bg-ed-canvas px-8 py-20 text-center font-sans">
+      <p className="text-[15px] font-medium text-ed-strong">{message}</p>
+      {detail && <p className="max-w-sm text-[13px] text-ed-muted">{detail}</p>}
+      <Link href="/" className="ed-btn ed-btn-primary mt-2">
         {linkLabel}
       </Link>
     </div>

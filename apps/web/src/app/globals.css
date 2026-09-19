@@ -10,6 +10,20 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Editor workstation tokens (values are defined under .editor-theme
+     below, so these utilities only resolve inside the editor). */
+  --color-ed-canvas: var(--ed-canvas);
+  --color-ed-surface: var(--ed-surface);
+  --color-ed-raised: var(--ed-raised);
+  --color-ed-text: var(--ed-text);
+  --color-ed-strong: var(--ed-strong);
+  --color-ed-muted: var(--ed-muted);
+  --color-ed-faint: var(--ed-faint);
+  --color-ed-violet: var(--ed-violet);
+  --color-ed-teal: var(--ed-teal);
+  --color-ed-amber: var(--ed-amber);
+  --color-ed-danger: var(--ed-danger);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,4 +37,339 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ==========================================================================
+   Editor workstation theme: "dark stage, lit by the tracks".
+   Scoped to the /editor route via the .editor-theme wrapper; the setup page
+   keeps its own light/dark behavior. Tokens first, then the control styles
+   the editor components share.
+   ========================================================================== */
+
+.editor-theme {
+  /* Tonal surfaces: a slightly warm near-black canvas and two steps up. */
+  --ed-canvas: #0f0d0e;
+  --ed-surface: #171516;
+  --ed-raised: #221f21;
+  --ed-raised-hover: #2c282b;
+
+  /* Text. muted and faint stay at 4.5:1 or better on canvas, surface, raised. */
+  --ed-text: #e9e7ea;
+  --ed-strong: #faf9fa;
+  --ed-muted: #a3a1a5;
+  --ed-faint: #8b898d;
+
+  /* Hairlines are decorative; --ed-control is a real control boundary and
+     stays at 3:1 or better against the surface it sits on (WCAG 1.4.11). */
+  --ed-line: rgba(255, 255, 255, 0.08);
+  --ed-control: #767377;
+
+  /* Identities and semantics. Violet = Song A, teal = Song B,
+     amber = anchors and the out-of-date state only. */
+  --ed-violet: #a78bfa;
+  --ed-teal: #2dd4bf;
+  --ed-amber: #f5b544;
+  --ed-danger: #f87171;
+
+  --ed-primary: #f4f2ef;
+  --ed-primary-ink: #151314;
+  --ed-focus: #f4f2ef;
+
+  color-scheme: dark;
+  background-color: var(--ed-canvas);
+  color: var(--ed-text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ed-control) transparent;
+}
+
+/* Browser surfaces that belong to the palette, not the platform. */
+html:has(.editor-theme) {
+  color-scheme: dark;
+  background-color: #0f0d0e;
+  scrollbar-color: #767377 #0f0d0e;
+}
+
+.editor-theme ::selection {
+  background: rgba(167, 139, 250, 0.4);
+  color: #ffffff;
+}
+
+@layer base {
+  .editor-theme :focus-visible {
+    outline: 2px solid var(--ed-focus);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* ---- Buttons ---------------------------------------------------------- */
+  .editor-theme .ed-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.5rem;
+    padding: 0 1.125rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 120ms ease-out,
+      color 120ms ease-out;
+  }
+  .editor-theme .ed-btn:disabled {
+    cursor: not-allowed;
+  }
+
+  /* The one dominant action on screen at a time. */
+  .editor-theme .ed-btn-primary {
+    background: var(--ed-primary);
+    color: var(--ed-primary-ink);
+  }
+  .editor-theme .ed-btn-primary:hover:not(:disabled) {
+    background: #ffffff;
+  }
+  .editor-theme .ed-btn-primary:disabled {
+    background: var(--ed-raised);
+    color: var(--ed-faint);
+  }
+
+  .editor-theme .ed-btn-secondary {
+    background: var(--ed-raised);
+    color: var(--ed-strong);
+    box-shadow: inset 0 0 0 1px var(--ed-control);
+  }
+  .editor-theme .ed-btn-secondary:hover:not(:disabled) {
+    background: var(--ed-raised-hover);
+  }
+  .editor-theme .ed-btn-secondary:disabled {
+    color: var(--ed-faint);
+  }
+
+  /* Quiet text actions: Replace, Remove, Re-analyze, Reset. */
+  .editor-theme .ed-btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 1.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--ed-muted);
+    cursor: pointer;
+    transition:
+      background-color 120ms ease-out,
+      color 120ms ease-out;
+  }
+  .editor-theme .ed-btn-ghost:hover:not(:disabled) {
+    color: var(--ed-strong);
+    background: var(--ed-raised);
+  }
+  .editor-theme .ed-btn-ghost:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .editor-theme .ed-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 9999px;
+    color: var(--ed-strong);
+    background: var(--ed-raised);
+    box-shadow: inset 0 0 0 1px var(--ed-control);
+    cursor: pointer;
+    transition: background-color 120ms ease-out;
+  }
+  .editor-theme .ed-icon-btn:hover:not(:disabled) {
+    background: var(--ed-raised-hover);
+  }
+  .editor-theme .ed-icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Transport: round and tonal. Playing swaps the icon and takes the deck's
+     identity color, so state never rides on color alone. */
+  .editor-theme .ed-transport {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    color: var(--ed-strong);
+    background: var(--ed-raised);
+    box-shadow: inset 0 0 0 1px var(--ed-control);
+    cursor: pointer;
+    transition:
+      background-color 120ms ease-out,
+      color 120ms ease-out;
+  }
+  .editor-theme .ed-transport:hover:not(:disabled) {
+    background: var(--ed-raised-hover);
+  }
+  .editor-theme .ed-transport[data-playing="true"] {
+    background: var(--track, var(--ed-primary));
+    color: var(--ed-primary-ink);
+    box-shadow: none;
+  }
+  /* The preview player has no song identity, so it must not borrow the
+     white primary fill while playing; Export stays the only dominant action. */
+  .editor-theme .ed-transport[data-playing="true"][data-tone="neutral"] {
+    background: var(--ed-raised-hover);
+    color: var(--ed-strong);
+    box-shadow: inset 0 0 0 1px #c9c6cb;
+  }
+  .editor-theme .ed-transport:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ---- Segmented toggles: state comes from aria-pressed ----------------- */
+  .editor-theme .ed-seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 0.5rem;
+    background: var(--ed-canvas);
+    box-shadow: inset 0 0 0 1px var(--ed-line);
+  }
+  .editor-theme .ed-seg button {
+    min-height: 2rem;
+    min-width: 2.5rem;
+    padding: 0 0.875rem;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--ed-muted);
+    cursor: pointer;
+    transition:
+      background-color 120ms ease-out,
+      color 120ms ease-out;
+  }
+  .editor-theme .ed-seg button:hover {
+    color: var(--ed-strong);
+    background: var(--ed-raised);
+  }
+  .editor-theme .ed-seg button[aria-pressed="true"] {
+    background: var(--ed-raised-hover);
+    color: var(--ed-strong);
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px #c9c6cb;
+  }
+
+  /* ---- Native range inputs: restyled, semantics untouched --------------- */
+  .editor-theme .ed-range {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 2rem;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+    --tone: var(--ed-strong);
+    --lo: 0%;
+    --hi: 0%;
+    --ed-range-fill: linear-gradient(
+      to right,
+      var(--ed-control) 0 var(--lo),
+      var(--tone) var(--lo) var(--hi),
+      var(--ed-control) var(--hi) 100%
+    );
+  }
+  .editor-theme .ed-range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--ed-range-fill);
+  }
+  .editor-theme .ed-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -8px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--ed-strong);
+    box-shadow: 0 0 0 3px var(--ed-surface);
+  }
+  .editor-theme .ed-range::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--ed-range-fill);
+  }
+  .editor-theme .ed-range::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--ed-strong);
+    box-shadow: 0 0 0 3px var(--ed-surface);
+  }
+  /* The focus ring moves onto the thumb: a surface-colored gap, then a
+     white ring, visible against both the filled and unfilled track. */
+  .editor-theme .ed-range:focus-visible {
+    outline: none;
+  }
+  .editor-theme .ed-range:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px var(--ed-surface),
+      0 0 0 5px var(--ed-focus);
+  }
+  .editor-theme .ed-range:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--ed-surface),
+      0 0 0 5px var(--ed-focus);
+  }
+
+  /* ---- Text field ------------------------------------------------------- */
+  .editor-theme .ed-input {
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--ed-canvas);
+    color: var(--ed-strong);
+    box-shadow: inset 0 0 0 1px var(--ed-control);
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-size: 0.8125rem;
+  }
+
+  /* ---- Waveform well: a darker inset lit faintly by the deck's color ---- */
+  .editor-theme .ed-well {
+    border-radius: 0.75rem;
+    background: color-mix(in oklab, var(--ed-canvas) 90%, var(--track, transparent) 10%);
+  }
+}
+
+/* Coarse pointers get real touch targets. */
+@media (pointer: coarse) {
+  .editor-theme .ed-btn-ghost {
+    min-height: 2.5rem;
+    padding: 0.5rem 0.75rem;
+  }
+  .editor-theme .ed-icon-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+  .editor-theme .ed-seg button {
+    min-height: 2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-theme * {
+    transition: none !important;
+  }
 }

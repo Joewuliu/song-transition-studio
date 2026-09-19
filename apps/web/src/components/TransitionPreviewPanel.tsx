@@ -6,10 +6,11 @@ import type { TransitionPreviewState } from "@/hooks/useTransitionPreview";
 import { formatDuration } from "@/lib/audio";
 import { downloadTransition, sanitizeExportFilename } from "@/lib/export";
 import type { TransitionBeats } from "@/lib/transitionPlan";
-import { PauseIcon, PlayIcon } from "@/components/icons";
+import { CheckIcon, PauseIcon, PlayIcon } from "@/components/icons";
 
-const PREVIEW_WAVE_COLOR = "#a1a1aa";
-const PREVIEW_PROGRESS_COLOR = "#52525b";
+const PREVIEW_WAVE_COLOR = "#8d8991";
+const PREVIEW_PROGRESS_COLOR = "#faf9fa";
+const PREVIEW_WAVEFORM_HEIGHT = 88;
 
 interface TransitionPreviewPanelProps {
   state: TransitionPreviewState;
@@ -32,23 +33,29 @@ export function TransitionPreviewPanel({
   onRegenerate,
   defaultFilename,
 }: TransitionPreviewPanelProps) {
-  if (state.status === "idle") return null;
-
   return (
-    <section className="flex flex-col gap-3 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        Transition preview
-      </h2>
+    <section
+      aria-labelledby="preview-heading"
+      className="flex flex-col gap-4 rounded-2xl bg-ed-surface p-4 sm:p-5"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <h2 id="preview-heading" className="text-sm font-semibold text-ed-strong">
+          Preview
+        </h2>
+        <PreviewSteps state={state} />
+      </div>
 
       <div aria-live="polite">
-        {state.status === "generating" && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Generating transition…
+        {state.status === "idle" && (
+          <p className="text-[13px] text-ed-muted">
+            Adjust the mix, then generate a preview to listen before you export.
           </p>
         )}
-
+        {state.status === "generating" && (
+          <p className="text-[13px] text-ed-muted">Generating transition…</p>
+        )}
         {state.status === "error" && (
-          <p className="text-sm text-red-500">{state.message}</p>
+          <p className="text-[13px] text-ed-danger">{state.message}</p>
         )}
       </div>
 
@@ -57,16 +64,16 @@ export function TransitionPreviewPanel({
           {state.isStale ? (
             <div
               aria-live="polite"
-              className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-400"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[color-mix(in_oklab,var(--ed-amber)_14%,transparent)] px-3.5 py-3"
             >
-              <span>
-                Preview out of date — the audio below is from your previous
-                settings. Regenerate preview to export.
-              </span>
+              <p className="text-[13px] text-ed-text">
+                <span className="font-semibold text-ed-amber">Preview out of date</span> — the
+                audio below is from your previous settings. Regenerate preview to export.
+              </p>
               <button
                 type="button"
                 onClick={onRegenerate}
-                className="font-medium underline-offset-4 hover:underline"
+                className="ed-btn ed-btn-secondary min-h-9"
               >
                 Regenerate preview
               </button>
@@ -74,13 +81,14 @@ export function TransitionPreviewPanel({
           ) : (
             <p
               aria-live="polite"
-              className="text-xs text-emerald-600 dark:text-emerald-400"
+              className="flex items-center gap-2 text-[13px] text-ed-text"
             >
-              ✓ Preview matches current settings
+              <CheckIcon className="size-4 text-ed-strong" />
+              Preview matches current settings
             </p>
           )}
           <PreviewPlayer
-            key={state.generation}
+            key={`player-${state.generation}`}
             file={state.file}
             targetBpm={state.targetBpm}
             durationSeconds={state.durationSeconds}
@@ -88,7 +96,7 @@ export function TransitionPreviewPanel({
           />
           {!state.isStale && (
             <ExportControl
-              key={state.generation}
+              key={`export-${state.generation}`}
               file={state.file}
               defaultFilename={defaultFilename}
             />
@@ -96,6 +104,49 @@ export function TransitionPreviewPanel({
         </>
       )}
     </section>
+  );
+}
+
+const PREVIEW_STEPS = ["Generate", "Listen", "Export"] as const;
+
+/** Where the user is in Generate → Listen → Export, derived entirely from
+ * the preview state itself. A fresh preview means generating is done and
+ * the export is the next move; everything else still needs a (re)generate. */
+function PreviewSteps({ state }: { state: TransitionPreviewState }) {
+  const current = state.status === "success" && !state.isStale ? 2 : 0;
+
+  return (
+    <ol aria-label="Preview steps" className="flex items-center gap-x-4 text-xs">
+      {PREVIEW_STEPS.map((step, index) => {
+        const isDone = index < current;
+        const isCurrent = index === current;
+        return (
+          <li
+            key={step}
+            className={`flex items-center gap-1.5 ${
+              isCurrent
+                ? "font-semibold text-ed-strong"
+                : isDone
+                  ? "text-ed-muted"
+                  : "text-ed-faint"
+            }`}
+          >
+            {isDone ? (
+              <CheckIcon className="size-3.5" />
+            ) : (
+              <span
+                aria-hidden="true"
+                className={`size-1.5 rounded-full ${
+                  isCurrent ? "bg-current" : "border border-current"
+                }`}
+              />
+            )}
+            {step}
+            {isCurrent && <span className="sr-only"> (current step)</span>}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -114,37 +165,58 @@ function PreviewPlayer({
     file,
     waveColor: PREVIEW_WAVE_COLOR,
     progressColor: PREVIEW_PROGRESS_COLOR,
+    height: PREVIEW_WAVEFORM_HEIGHT,
   });
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={togglePlay}
           disabled={!isReady}
-          aria-label={isPlaying ? "Pause" : "Play"}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 transition-colors hover:border-zinc-400 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-200"
+          data-playing={isPlaying}
+          data-tone="neutral"
+          aria-label={isPlaying ? "Pause preview" : "Play preview"}
+          className="ed-transport"
         >
           {isPlaying ? (
-            <PauseIcon className="h-4 w-4" />
+            <PauseIcon className="size-[18px]" />
           ) : (
-            <PlayIcon className="h-4 w-4" />
+            <PlayIcon className="size-[18px]" />
           )}
         </button>
-        <div className="min-w-0 flex-1">
-          <div ref={containerRef} className="w-full" />
+        <div className="ed-well relative min-w-0 flex-1 p-2">
+          <div
+            ref={containerRef}
+            className="w-full"
+            style={{ minHeight: PREVIEW_WAVEFORM_HEIGHT }}
+          />
           {!isReady && (
-            <p className="text-xs text-zinc-400">Decoding preview…</p>
+            <p
+              role="status"
+              className="absolute inset-0 grid place-items-center text-xs text-ed-muted"
+            >
+              Decoding preview…
+            </p>
           )}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-400">
-        <span>{transitionBeats} beats</span>
-        <span>Target: {targetBpm.toFixed(1)} BPM</span>
-        <span>{formatDuration(durationSeconds)} preview</span>
-      </div>
+      <dl className="flex flex-wrap gap-x-6 gap-y-1 text-[13px]">
+        <PreviewReadout label="Length" value={`${transitionBeats} beats`} />
+        <PreviewReadout label="Target" value={`${targetBpm.toFixed(1)} BPM`} />
+        <PreviewReadout label="Preview" value={formatDuration(durationSeconds)} />
+      </dl>
+    </div>
+  );
+}
+
+function PreviewReadout({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <dt className="text-xs text-ed-muted">{label}</dt>
+      <dd className="font-mono tabular-nums text-ed-strong">{value}</dd>
     </div>
   );
 }
@@ -169,8 +241,8 @@ function ExportControl({
   };
 
   return (
-    <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-      <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-[13px] font-medium text-ed-muted">
         Filename
         <input
           type="text"
@@ -178,13 +250,13 @@ function ExportControl({
           onChange={(event) => setFilename(event.target.value)}
           onBlur={() => setFilename((current) => sanitizeExportFilename(current))}
           spellCheck={false}
-          className="w-full rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 text-sm text-zinc-800 focus:border-zinc-500 focus:outline-none dark:border-zinc-700 dark:text-zinc-100"
+          className="ed-input"
         />
       </label>
       <button
         type="button"
         onClick={handleExport}
-        className="self-start rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+        className="ed-btn ed-btn-primary min-h-10 sm:shrink-0"
       >
         Export WAV
       </button>

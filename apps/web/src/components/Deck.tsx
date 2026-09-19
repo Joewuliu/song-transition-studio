@@ -1,18 +1,29 @@
 "use client";
 
-import { useCallback, useRef, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+} from "react";
 import { useWaveSurfer } from "@/hooks/useWaveSurfer";
 import { useTrackAnalysis } from "@/hooks/useTrackAnalysis";
 import { useBeatAnchorControls } from "@/hooks/useBeatAnchorControls";
 import { formatDuration, formatTimestamp, isSupportedAudioFile } from "@/lib/audio";
 import { EMPTY_BEATS, toDisplayBeatNumber } from "@/lib/beats";
-import { ACCENT_STYLES, type TrackAccent } from "@/lib/trackAccent";
+import { EDITOR_TRACK_STYLES, type TrackAccent } from "@/lib/trackAccent";
 import type { TrackAnalysis } from "@/lib/api";
 import type { BeatAnchor } from "@/lib/transitionPlan";
 import { BeatGrid } from "@/components/BeatGrid";
-import { PauseIcon, PlayIcon } from "@/components/icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PauseIcon,
+  PlayIcon,
+} from "@/components/icons";
 
-const DECK_WAVEFORM_HEIGHT = 128;
+const DECK_WAVEFORM_HEIGHT = 144;
 
 interface DeckProps {
   deckLabel: string;
@@ -30,11 +41,11 @@ interface DeckProps {
 }
 
 /**
- * A compact digital deck: the same file/WaveSurfer/beat-grid/anchor
- * machinery as the setup page's TrackSlot, reused via the same hooks —
- * just laid out to prioritize the waveform and transport over
- * upload-oriented chrome. Replace/Remove remain available but stay
- * secondary (small, top-right).
+ * One deck of the editor: the same file/WaveSurfer/beat-grid/anchor
+ * machinery as the setup page (via the same hooks), presented so the
+ * waveform and transport lead. The deck carries its song's identity color
+ * (violet = Song A, teal = Song B); Replace, Remove and Re-analyze stay
+ * available but quiet.
  */
 export function Deck({
   deckLabel,
@@ -46,7 +57,7 @@ export function Deck({
   anchor,
   onAnchorChange,
 }: DeckProps) {
-  const styles = ACCENT_STYLES[accent];
+  const styles = EDITOR_TRACK_STYLES[accent];
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -95,6 +106,7 @@ export function Deck({
       onSeek: selectNearest,
     });
 
+  const isAnalyzing = analysisState.status === "analyzing";
   const openFileDialog = () => inputRef.current?.click();
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -110,43 +122,55 @@ export function Deck({
   };
 
   return (
-    <section className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span
-            className={`text-xs font-semibold uppercase tracking-widest ${styles.text}`}
-          >
+    <section
+      aria-label={deckLabel}
+      className="flex min-w-0 flex-col gap-4 rounded-2xl bg-ed-surface p-4 sm:p-5"
+      style={{ "--track": styles.color } as CSSProperties}
+    >
+      <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+        <div className="min-w-0 flex-1 basis-44">
+          <p className={`flex items-center gap-2 text-xs font-medium ${styles.textClass}`}>
+            <span aria-hidden="true" className="size-2 rounded-full bg-current" />
             {deckLabel}
-          </span>
-          <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+          </p>
+          <h2
+            className="mt-1 truncate text-[15px] font-semibold text-ed-strong"
+            title={file.name}
+          >
             {file.name}
-          </span>
+          </h2>
+          <div aria-live="polite" className="text-xs text-ed-danger">
+            {error ?? fileError}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-3 pt-0.5 text-[11px] text-zinc-400">
+        <div className="-mr-2 flex items-center">
           <button
             type="button"
             onClick={analyze}
-            disabled={analysisState.status === "analyzing"}
-            className="transition-colors hover:text-zinc-600 disabled:opacity-50 dark:hover:text-zinc-300"
+            disabled={isAnalyzing}
+            aria-label={isAnalyzing ? `Analyzing ${deckLabel}` : `Re-analyze ${deckLabel}`}
+            className="ed-btn-ghost"
           >
-            {analysisState.status === "analyzing" ? "Analyzing…" : "Re-analyze"}
+            {isAnalyzing ? "Analyzing…" : "Re-analyze"}
           </button>
           <button
             type="button"
             onClick={openFileDialog}
-            className="transition-colors hover:text-zinc-600 dark:hover:text-zinc-300"
+            aria-label={`Replace ${deckLabel} track`}
+            className="ed-btn-ghost"
           >
             Replace
           </button>
           <button
             type="button"
             onClick={() => onFileChange(null)}
-            className="transition-colors hover:text-red-500"
+            aria-label={`Remove ${deckLabel} track`}
+            className="ed-btn-ghost"
           >
             Remove
           </button>
         </div>
-      </div>
+      </header>
       <input
         ref={inputRef}
         type="file"
@@ -156,86 +180,110 @@ export function Deck({
       />
 
       {analysis && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-200">
-            {analysis.tempoBpm.toFixed(1)} BPM
-          </span>
+        <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+          <Readout label="BPM" value={analysis.tempoBpm.toFixed(1)} mono />
           {analysis.estimatedKey && analysis.estimatedMode && (
-            <span>
-              {analysis.estimatedKey} {analysis.estimatedMode}
-            </span>
+            <Readout label="Key" value={`${analysis.estimatedKey} ${analysis.estimatedMode}`} />
           )}
-          <span>{formatDuration(analysis.durationSeconds)}</span>
-        </div>
+          <Readout label="Duration" value={formatDuration(analysis.durationSeconds)} mono />
+        </dl>
       )}
 
-      <div className="relative">
-        <div ref={containerRef} className="w-full" />
-        {analysis && (
-          <BeatGrid beats={beats} duration={duration} selectedIndex={selectedIndex} />
-        )}
+      <div className="ed-well relative overflow-hidden p-2">
+        <div className="relative" style={{ minHeight: DECK_WAVEFORM_HEIGHT }}>
+          <div ref={containerRef} className="w-full" />
+          {analysis && (
+            <BeatGrid
+              beats={beats}
+              duration={duration}
+              selectedIndex={selectedIndex}
+              markerClassName="bg-white/15"
+              selectedMarkerClassName="bg-ed-amber"
+            />
+          )}
+          {!isReady && !error && (
+            <p
+              role="status"
+              className="absolute inset-0 grid place-items-center text-xs text-ed-muted"
+            >
+              Decoding waveform…
+            </p>
+          )}
+        </div>
       </div>
 
-      <div
-        className="flex items-center justify-between text-[11px] tabular-nums text-zinc-400"
-        aria-hidden="true"
-      >
-        <span>{formatTimestamp(currentTime)}</span>
-        <span>{formatDuration(duration)}</span>
-      </div>
+      {/* Transport and anchor are always two rows so both decks line up,
+          whatever the anchor label's length or the deck's width. */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={togglePlay}
+            disabled={!isReady}
+            data-playing={isPlaying}
+            aria-label={`${isPlaying ? "Pause" : "Play"} ${deckLabel}`}
+            className="ed-transport"
+          >
+            {isPlaying ? (
+              <PauseIcon className="size-[18px]" />
+            ) : (
+              <PlayIcon className="size-[18px]" />
+            )}
+          </button>
+          <p className="font-mono text-[15px] tabular-nums" aria-hidden="true">
+            <span className="text-ed-strong">{formatTimestamp(currentTime)}</span>
+            <span className="text-ed-muted"> / {formatDuration(duration)}</span>
+          </p>
+        </div>
 
-      <p className="text-xs text-red-500" aria-live="polite">
-        {error ?? fileError}
-      </p>
-
-      {analysis ? (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-          <div className="flex items-center gap-1">
+        {analysis ? (
+          <div role="group" aria-label={`${deckLabel} anchor`} className="flex items-center gap-2">
             <button
               type="button"
               onClick={selectPrevious}
               disabled={!canSelectPrevious}
-              aria-label="Select previous beat"
-              className="flex h-6 w-6 items-center justify-center rounded-full border border-zinc-300 text-sm leading-none text-zinc-600 transition-colors hover:border-zinc-400 disabled:opacity-30 dark:border-zinc-700 dark:text-zinc-300"
+              aria-label={`${deckLabel}: select previous beat`}
+              className="ed-icon-btn"
             >
-              ‹
+              <ChevronLeftIcon className="size-4" />
             </button>
+            <p className="flex min-w-0 items-center gap-2 text-[13px]">
+              <span aria-hidden="true" className="size-2 shrink-0 rotate-45 bg-ed-amber" />
+              {selectedIndex !== null && selectedTime !== null ? (
+                <span className="font-mono tabular-nums text-ed-strong">
+                  Beat {toDisplayBeatNumber(selectedIndex)} · {formatTimestamp(selectedTime)}
+                </span>
+              ) : (
+                <span className="text-ed-muted">Click the waveform to set an anchor</span>
+              )}
+            </p>
             <button
               type="button"
               onClick={selectNext}
               disabled={!canSelectNext}
-              aria-label="Select next beat"
-              className="flex h-6 w-6 items-center justify-center rounded-full border border-zinc-300 text-sm leading-none text-zinc-600 transition-colors hover:border-zinc-400 disabled:opacity-30 dark:border-zinc-700 dark:text-zinc-300"
+              aria-label={`${deckLabel}: select next beat`}
+              className="ed-icon-btn"
             >
-              ›
+              <ChevronRightIcon className="size-4" />
             </button>
           </div>
-          <span>
-            {selectedIndex !== null && selectedTime !== null
-              ? `Beat ${toDisplayBeatNumber(selectedIndex)} · ${formatTimestamp(selectedTime)}`
-              : "Click the waveform, or use the buttons, to set a transition anchor"}
-          </span>
-        </div>
-      ) : (
-        <p className="text-xs text-zinc-400">
-          {!isReady ? "Decoding waveform…" : "Not analyzed yet."}
-        </p>
-      )}
-
-      <button
-        type="button"
-        onClick={togglePlay}
-        disabled={!isReady}
-        aria-label={isPlaying ? "Pause" : "Play"}
-        className="flex h-11 items-center justify-center gap-2 self-stretch rounded-full border border-zinc-300 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-400 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-200"
-      >
-        {isPlaying ? (
-          <PauseIcon className="h-4 w-4" />
         ) : (
-          <PlayIcon className="h-4 w-4" />
+          <p className="text-xs text-ed-muted">Not analyzed yet.</p>
         )}
-        {isPlaying ? "Pause" : "Play"}
-      </button>
+      </div>
     </section>
+  );
+}
+
+function Readout({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <dt className="text-xs text-ed-muted">{label}</dt>
+      <dd
+        className={`text-[15px] text-ed-strong ${mono ? "font-mono tabular-nums" : "font-medium"}`}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }

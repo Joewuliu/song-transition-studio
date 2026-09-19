@@ -9,7 +9,14 @@ interface BeatGridProps {
    * response's duration — markers must line up with what's actually drawn. */
   duration: number;
   selectedIndex: number | null;
+  /** Optional overrides so a dark surface can theme the markers; the
+   * defaults are the setup page's light/dark-aware classes. */
+  markerClassName?: string;
+  selectedMarkerClassName?: string;
 }
+
+const DEFAULT_MARKER_CLASS = "bg-zinc-900/25 dark:bg-white/25";
+const DEFAULT_SELECTED_MARKER_CLASS = "bg-amber-500";
 
 /**
  * Purely visual: markers carry no pointer handling of their own, so they
@@ -17,7 +24,13 @@ interface BeatGridProps {
  * beat happens via that same seek interaction (snapped to the nearest beat
  * upstream) or the previous/next controls, not by clicking a marker.
  */
-export function BeatGrid({ beats, duration, selectedIndex }: BeatGridProps) {
+export function BeatGrid({
+  beats,
+  duration,
+  selectedIndex,
+  markerClassName = DEFAULT_MARKER_CLASS,
+  selectedMarkerClassName = DEFAULT_SELECTED_MARKER_CLASS,
+}: BeatGridProps) {
   const displayIndices = useMemo(
     () => selectDisplayBeatIndices(beats, selectedIndex),
     [beats, selectedIndex],
@@ -40,8 +53,8 @@ export function BeatGrid({ beats, duration, selectedIndex }: BeatGridProps) {
             key={index}
             className={
               isSelected
-                ? "absolute top-0 bottom-0 w-0.5 bg-amber-500"
-                : "absolute top-0 bottom-0 w-px bg-zinc-900/25 dark:bg-white/25"
+                ? `absolute top-0 bottom-0 w-0.5 ${selectedMarkerClassName}`
+                : `absolute top-0 bottom-0 w-px ${markerClassName}`
             }
             style={{ left: `${percent}%` }}
           />
