@@ -32,6 +32,11 @@ class TransitionCandidate(BaseModel):
     local_key: PitchClass | None = None
     local_mode: Mode | None = None
     local_key_confidence: float = Field(default=0.0, ge=0, le=1)
+    # A compact local MFCC summary (mean of 13 coefficients) around this
+    # beat — see services/audio_analysis._local_timbre_at. Used by M12's
+    # pairwise planner for cross-track timbral/spectral compatibility; null
+    # whenever chroma/MFCC extraction itself failed (see TrackAnalysis).
+    local_timbre: list[float] | None = None
 
 
 class TrackAnalysis(BaseModel):
@@ -138,16 +143,34 @@ class TransitionSuggestion(BaseModel):
     bass_swap_width_beats: BassSwapWidthBeats = 4
 
 
-class TransitionVariant(BaseModel):
-    """A named, deterministic alternative way to perform the SAME base
-    transition — same anchors/tempo interpretation as the top-level `plan`,
-    only presentation (length/style/bass-swap window) differs. See
-    services/transition_planner.build_transition_variants."""
+class TransitionChoice(BaseModel):
+    """One deterministic, distinct Song A exit / Song B entry anchor PAIR
+    the planner judged compatible (M12's pairwise search) — see
+    services/transition_planner.suggest_transition_choices. Choices differ
+    in WHICH anchors are used, not merely in presentation: each carries its
+    own ready-to-adopt `plan` plus the local harmonic context and
+    compatibility summary specific to that pair.
 
-    id: Literal["smooth", "bass_swap", "quick"]
-    name: str
+    `compatibility` and `harmonic_compatibility` are both in [0, 1] and
+    measure deterministic, documented feature agreement (tempo, harmony,
+    structure, energy continuity, timbre, rhythm) — never a claim about
+    how a transition will actually sound, and never the only thing a user
+    should rely on to choose between options (auditioning via Preview is
+    the real check)."""
+
+    id: str
+    label: str
     description: str
     plan: TransitionSuggestion
+    compatibility: float = Field(..., ge=0, le=1)
+    # Local harmonic context around THIS choice's specific anchors — not
+    # the tracks' global estimated_key. Neutral (0.5) / null whenever
+    # reliable local harmony wasn't available for either anchor.
+    harmonic_compatibility: float = Field(..., ge=0, le=1)
+    song_a_local_key: PitchClass | None = None
+    song_a_local_mode: Mode | None = None
+    song_b_local_key: PitchClass | None = None
+    song_b_local_mode: Mode | None = None
 
 
 class TransitionSuggestRequest(BaseModel):
@@ -159,20 +182,15 @@ class TransitionSuggestRequest(BaseModel):
 
 
 class TransitionSuggestResponse(BaseModel):
-    plan: TransitionSuggestion
-    variants: list[TransitionVariant]
+    """Up to MAX_CHOICES distinct anchor-pair choices (see
+    services/transition_planner), ranked best-first — `choices[0]` is the
+    single best pairing found. Tempo interpretation is a property of the
+    two tracks' overall BPMs, not of any one anchor pair, so it's reported
+    once here rather than repeated per choice."""
+
+    choices: list[TransitionChoice] = Field(..., min_length=1)
     effective_song_b_bpm: float = Field(..., gt=0)
     tempo_compatibility: Literal["compatible", "moderate", "significant", "extreme"]
     used_tempo_normalization: bool
     song_a_anchor_source: Literal["candidate", "fallback"]
     song_b_anchor_source: Literal["candidate", "fallback"]
-    # Local harmonic context around the *selected* anchors specifically —
-    # not the tracks' global estimated_key — plus the deterministic
-    # compatibility score used to help choose this anchor pair. Neutral
-    # (0.5) / null whenever reliable local harmony wasn't available; this
-    # never blocks a suggestion from succeeding.
-    harmonic_compatibility: float = Field(..., ge=0, le=1)
-    song_a_local_key: PitchClass | None = None
-    song_a_local_mode: Mode | None = None
-    song_b_local_key: PitchClass | None = None
-    song_b_local_mode: Mode | None = None

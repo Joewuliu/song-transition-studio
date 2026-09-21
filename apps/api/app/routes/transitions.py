@@ -11,13 +11,14 @@ from app.schemas import (
     TransitionSuggestion,
     TransitionSuggestRequest,
     TransitionSuggestResponse,
-    TransitionVariant,
+)
+from app.schemas import (
+    TransitionChoice as TransitionChoiceSchema,
 )
 from app.services.transition_planner import (
-    AnchorChoice,
+    TransitionChoice,
     TransitionPlannerError,
-    build_transition_variants,
-    suggest_transition_plan,
+    suggest_transition_choices,
 )
 from app.services.transition_renderer import TransitionRenderError, render_transition
 from app.services.upload_validation import read_validated_upload, safe_temp_suffix
@@ -96,103 +97,60 @@ async def render_transition_preview(
 async def suggest_transition(
     request: TransitionSuggestRequest,
 ) -> TransitionSuggestResponse:
-    """Suggests a starting TransitionPlan from two already-computed track
-    analyses — no audio upload needed, since planning only needs the beats/
-    candidates already returned by /tracks/analyze.
+    """Suggests up to three distinct, ready-to-adopt transition choices from
+    two already-computed track analyses — no audio upload needed, since
+    planning only needs the beats/candidates already returned by
+    /tracks/analyze.
 
-    Also returns three deterministic presentation variants (Smooth Blend /
-    Bass Swap / Quick Mix) derived from that SAME base plan — same anchors,
-    tempo interpretation, and starting gains throughout; see
-    services/transition_planner.build_transition_variants."""
+    M12: each choice represents a genuinely different Song A exit / Song B
+    entry anchor PAIR (not the same anchors presented three different
+    ways) — see services/transition_planner.suggest_transition_choices."""
     try:
-        result = suggest_transition_plan(
+        result = suggest_transition_choices(
             request.song_a_analysis, request.song_b_analysis
         )
     except TransitionPlannerError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    variants = build_transition_variants(result)
-
     return TransitionSuggestResponse(
-        plan=_suggestion_schema(
-            song_a_anchor=result.song_a_anchor,
-            song_b_anchor=result.song_b_anchor,
-            transition_beats=result.transition_beats,
-            song_a_gain_db=result.song_a_gain_db,
-            song_b_gain_db=result.song_b_gain_db,
-            crossfade_bias=result.crossfade_bias,
-            song_b_tempo_multiplier=result.song_b_tempo_multiplier,
-        ),
-        variants=[
-            TransitionVariant(
-                id=variant.id,
-                name=variant.name,
-                description=variant.description,
-                plan=_suggestion_schema(
-                    song_a_anchor=variant.plan.song_a_anchor,
-                    song_b_anchor=variant.plan.song_b_anchor,
-                    transition_beats=variant.plan.transition_beats,
-                    song_a_gain_db=variant.plan.song_a_gain_db,
-                    song_b_gain_db=variant.plan.song_b_gain_db,
-                    crossfade_bias=variant.plan.crossfade_bias,
-                    song_b_tempo_multiplier=variant.plan.song_b_tempo_multiplier,
-                    transition_style=variant.plan.transition_style,
-                    bass_swap_position=variant.plan.bass_swap_position,
-                    bass_swap_width_beats=variant.plan.bass_swap_width_beats,
-                ),
-            )
-            for variant in variants
-        ],
+        choices=[_choice_schema(choice) for choice in result.choices],
         effective_song_b_bpm=round(result.effective_song_b_bpm, 3),
         tempo_compatibility=result.tempo_compatibility,
-        used_tempo_normalization=result.song_b_tempo_multiplier != 1.0,
-        song_a_anchor_source="candidate"
-        if result.song_a_anchor.from_candidate
-        else "fallback",
-        song_b_anchor_source="candidate"
-        if result.song_b_anchor.from_candidate
-        else "fallback",
-        harmonic_compatibility=round(result.harmonic_compatibility, 4),
-        song_a_local_key=result.song_a_anchor.local_key,
-        song_a_local_mode=result.song_a_anchor.local_mode,
-        song_b_local_key=result.song_b_anchor.local_key,
-        song_b_local_mode=result.song_b_anchor.local_mode,
+        used_tempo_normalization=result.used_tempo_normalization,
+        song_a_anchor_source=result.song_a_anchor_source,
+        song_b_anchor_source=result.song_b_anchor_source,
     )
 
 
-def _suggestion_schema(
-    *,
-    song_a_anchor: AnchorChoice,
-    song_b_anchor: AnchorChoice,
-    transition_beats: int,
-    song_a_gain_db: float,
-    song_b_gain_db: float,
-    crossfade_bias: float,
-    song_b_tempo_multiplier: float,
-    transition_style: str = "smooth",
-    bass_swap_position: float = 0.5,
-    bass_swap_width_beats: int = 4,
-) -> TransitionSuggestion:
-    """Builds one TransitionSuggestion schema instance — used for both the
-    top-level `plan` and every variant's `plan`, so the mapping from
-    planner output to API shape is written exactly once."""
-    return TransitionSuggestion(
-        song_a_anchor=SuggestedAnchor(
-            beat_index=song_a_anchor.beat_index,
-            time_seconds=song_a_anchor.time_seconds,
+def _choice_schema(choice: TransitionChoice) -> TransitionChoiceSchema:
+    return TransitionChoiceSchema(
+        id=choice.id,
+        label=choice.label,
+        description=choice.description,
+        plan=TransitionSuggestion(
+            song_a_anchor=SuggestedAnchor(
+                beat_index=choice.song_a_anchor.beat_index,
+                time_seconds=choice.song_a_anchor.time_seconds,
+            ),
+            song_b_anchor=SuggestedAnchor(
+                beat_index=choice.song_b_anchor.beat_index,
+                time_seconds=choice.song_b_anchor.time_seconds,
+            ),
+            transition_beats=choice.transition_beats,
+            song_a_gain_db=choice.song_a_gain_db,
+            song_b_gain_db=choice.song_b_gain_db,
+            crossfade_bias=choice.crossfade_bias,
+            song_b_tempo_multiplier=choice.song_b_tempo_multiplier,
+            transition_style=choice.transition_style,
+            bass_swap_position=choice.bass_swap_position,
+            bass_swap_width_beats=choice.bass_swap_width_beats,
         ),
-        song_b_anchor=SuggestedAnchor(
-            beat_index=song_b_anchor.beat_index,
-            time_seconds=song_b_anchor.time_seconds,
-        ),
-        transition_beats=transition_beats,
-        song_a_gain_db=song_a_gain_db,
-        song_b_gain_db=song_b_gain_db,
-        crossfade_bias=crossfade_bias,
-        song_b_tempo_multiplier=song_b_tempo_multiplier,
-        transition_style=transition_style,
-        bass_swap_position=bass_swap_position,
-        bass_swap_width_beats=bass_swap_width_beats,
+        compatibility=choice.compatibility,
+        harmonic_compatibility=choice.harmonic_compatibility,
+        song_a_local_key=choice.song_a_anchor.local_key,
+        song_a_local_mode=choice.song_a_anchor.local_mode,
+        song_b_local_key=choice.song_b_anchor.local_key,
+        song_b_local_mode=choice.song_b_anchor.local_mode,
     )
 
 

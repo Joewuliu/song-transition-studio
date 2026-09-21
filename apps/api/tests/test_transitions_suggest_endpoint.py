@@ -39,7 +39,7 @@ def _analysis(
     }
 
 
-def test_suggest_endpoint_requires_no_audio_upload_and_returns_a_plan() -> None:
+def test_suggest_endpoint_requires_no_audio_upload_and_returns_choices() -> None:
     song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
     song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
 
@@ -51,7 +51,8 @@ def test_suggest_endpoint_requires_no_audio_upload_and_returns_a_plan() -> None:
     assert response.status_code == 200
     body = response.json()
 
-    plan = body["plan"]
+    assert len(body["choices"]) >= 1
+    plan = body["choices"][0]["plan"]
     assert plan["song_a_anchor"]["beat_index"] == 150
     assert plan["song_b_anchor"]["beat_index"] == 10
     assert plan["transition_beats"] in (8, 16, 32)
@@ -72,7 +73,7 @@ def test_suggest_endpoint_requires_no_audio_upload_and_returns_a_plan() -> None:
 
 
 def test_suggest_endpoint_response_matches_the_frontend_transition_plan_shape() -> None:
-    """The suggested plan's keys must be exactly what TransitionPlan needs
+    """Each choice's plan keys must be exactly what TransitionPlan needs
     (plus the tempo multiplier) — no extra required editable fields."""
     song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
     song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
@@ -82,7 +83,7 @@ def test_suggest_endpoint_response_matches_the_frontend_transition_plan_shape() 
         json={"song_a_analysis": song_a, "song_b_analysis": song_b},
     )
 
-    plan = response.json()["plan"]
+    plan = response.json()["choices"][0]["plan"]
     assert set(plan.keys()) == {
         "song_a_anchor",
         "song_b_anchor",
@@ -97,6 +98,32 @@ def test_suggest_endpoint_response_matches_the_frontend_transition_plan_shape() 
     }
 
 
+def test_suggest_endpoint_choice_shape() -> None:
+    song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
+    song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
+
+    response = client.post(
+        "/transitions/suggest",
+        json={"song_a_analysis": song_a, "song_b_analysis": song_b},
+    )
+
+    for choice in response.json()["choices"]:
+        assert set(choice.keys()) == {
+            "id",
+            "label",
+            "description",
+            "plan",
+            "compatibility",
+            "harmonic_compatibility",
+            "song_a_local_key",
+            "song_a_local_mode",
+            "song_b_local_key",
+            "song_b_local_mode",
+        }
+        assert 0.0 <= choice["compatibility"] <= 1.0
+        assert 0.0 <= choice["harmonic_compatibility"] <= 1.0
+
+
 def test_suggest_endpoint_detects_half_double_time_relationship() -> None:
     song_a = _analysis(140.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
     song_b = _analysis(70.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
@@ -107,7 +134,7 @@ def test_suggest_endpoint_detects_half_double_time_relationship() -> None:
     )
 
     body = response.json()
-    assert body["plan"]["song_b_tempo_multiplier"] == 2
+    assert body["choices"][0]["plan"]["song_b_tempo_multiplier"] == 2
     assert body["effective_song_b_bpm"] == 140.0
     assert body["used_tempo_normalization"] is True
 
@@ -141,9 +168,7 @@ def test_suggest_endpoint_rejects_malformed_request_body() -> None:
     assert response.status_code == 422
 
 
-def test_suggest_endpoint_still_returns_the_existing_suggestion_plan() -> None:
-    """item 15: the M9 `variants` addition must not disturb the pre-M9
-    top-level `plan` and its metadata."""
+def test_suggest_endpoint_choices_share_the_same_global_transition_style() -> None:
     song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
     song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
 
@@ -153,25 +178,34 @@ def test_suggest_endpoint_still_returns_the_existing_suggestion_plan() -> None:
     )
 
     body = response.json()
-    assert body["plan"]["song_a_anchor"]["beat_index"] == 150
-    assert body["plan"]["song_b_anchor"]["beat_index"] == 10
-    assert body["plan"]["transition_style"] == "smooth"
-    assert "harmonic_compatibility" in body
-    assert "tempo_compatibility" in body
+    for choice in body["choices"]:
+        assert choice["plan"]["transition_style"] == "smooth"
 
 
-def test_suggest_endpoint_returns_the_three_expected_variants() -> None:
-    song_a = _analysis(128.0, 200, exit_candidates=[_candidate(150, 75.0, 1.0)])
-    song_b = _analysis(120.0, 200, entry_candidates=[_candidate(10, 5.0, 1.0)])
+def test_suggest_endpoint_returns_multiple_distinct_choices_for_a_wide_pool() -> None:
+    exits = [
+        _candidate(60 + i * 6, 30.0 + i * 3.0, score=0.5 + 0.05 * i) for i in range(8)
+    ]
+    entries = [
+        _candidate(5 + i * 5, 2.5 + i * 2.5, score=0.5 + 0.04 * i) for i in range(8)
+    ]
+    song_a = _analysis(128.0, 300, exit_candidates=exits)
+    song_b = _analysis(120.0, 300, entry_candidates=entries)
 
     response = client.post(
         "/transitions/suggest",
         json={"song_a_analysis": song_a, "song_b_analysis": song_b},
     )
 
-    variants = response.json()["variants"]
-    assert [variant["id"] for variant in variants] == ["smooth", "bass_swap", "quick"]
-    for variant in variants:
-        assert set(variant.keys()) == {"id", "name", "description", "plan"}
-        assert variant["plan"]["song_a_anchor"]["beat_index"] == 150
-        assert variant["plan"]["song_b_anchor"]["beat_index"] == 10
+    body = response.json()
+    assert len(body["choices"]) == 3
+    ids = [choice["id"] for choice in body["choices"]]
+    assert ids == ["1", "2", "3"]
+    anchor_pairs = {
+        (
+            choice["plan"]["song_a_anchor"]["beat_index"],
+            choice["plan"]["song_b_anchor"]["beat_index"],
+        )
+        for choice in body["choices"]
+    }
+    assert len(anchor_pairs) == 3  # genuinely different anchor pairs

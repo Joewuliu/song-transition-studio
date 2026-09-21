@@ -5,17 +5,17 @@ import {
   renderTransition,
   RenderTransitionError,
   type TrackAnalysis,
-  type TransitionVariant,
-  type TransitionVariantId,
+  type TransitionChoice,
+  type TransitionChoiceId,
 } from "@/lib/api";
 import type { TransitionBeats } from "@/lib/transitionPlan";
 
 export type VariantPreviewState =
   | { status: "idle" }
-  | { status: "rendering"; variantId: TransitionVariantId }
+  | { status: "rendering"; variantId: TransitionChoiceId }
   | {
       status: "success";
-      variantId: TransitionVariantId;
+      variantId: TransitionChoiceId;
       /** Bumped on every successful render; use as a remount key for the
        * player so its internal ready/duration state always starts fresh. */
       generation: number;
@@ -24,10 +24,10 @@ export type VariantPreviewState =
       durationSeconds: number;
       transitionBeats: TransitionBeats;
     }
-  | { status: "error"; variantId: TransitionVariantId; message: string };
+  | { status: "error"; variantId: TransitionChoiceId; message: string };
 
 interface PreviewVariantArgs {
-  variant: TransitionVariant;
+  variant: TransitionChoice;
   songAFile: File;
   songBFile: File;
   songAAnalysis: TrackAnalysis;
@@ -36,25 +36,25 @@ interface PreviewVariantArgs {
 
 interface UseVariantPreviewResult {
   state: VariantPreviewState;
-  /** Renders exactly the given variant's plan. A no-op if that same
-   * variant is already rendering — never issues duplicate concurrent
-   * requests for one option. Switching to a different variant while one
-   * is in flight is allowed; only the latest request's result is kept. */
+  /** Renders exactly the given choice's plan. A no-op if that same choice
+   * is already rendering — never issues duplicate concurrent requests for
+   * one option. Switching to a different choice while one is in flight is
+   * allowed; only the latest request's result is kept. */
   previewVariant: (args: PreviewVariantArgs) => void;
   reset: () => void;
 }
 
 /**
- * Option-preview state — auditioning a candidate TransitionVariant before
+ * Option-preview state — auditioning a candidate TransitionChoice before
  * it's adopted. Deliberately separate from useTransitionPreview, which
- * owns the *editable* plan's own preview once a variant (or a manual
- * choice) has been adopted into the editor; the two are never the same
- * player representing the same "live" plan (see M9 notes).
+ * owns the *editable* plan's own preview once a choice has been adopted
+ * into the editor; the two are never the same player representing the
+ * same "live" plan (see M9 notes).
  */
 export function useVariantPreview(): UseVariantPreviewResult {
   const [state, setState] = useState<VariantPreviewState>({ status: "idle" });
   const nextGeneration = useRef(0);
-  const renderingVariantId = useRef<TransitionVariantId | null>(null);
+  const renderingVariantId = useRef<TransitionChoiceId | null>(null);
   const latestRequestId = useRef(0);
 
   const previewVariant = useCallback(
@@ -88,7 +88,7 @@ export function useVariantPreview(): UseVariantPreviewResult {
           if (requestId !== latestRequestId.current) return;
 
           nextGeneration.current += 1;
-          const file = new File([result.wavBlob], `${variant.id}-preview.wav`, {
+          const file = new File([result.wavBlob], `choice-${variant.id}-preview.wav`, {
             type: "audio/wav",
           });
           setState({
@@ -122,7 +122,7 @@ export function useVariantPreview(): UseVariantPreviewResult {
     renderingVariantId.current = null;
     // Invalidate any in-flight request so its eventual resolution can't
     // resurrect stale state after this reset (e.g. right after adopting a
-    // variant while a different one was still rendering).
+    // choice while a different one was still rendering).
     latestRequestId.current += 1;
     setState((current) => (current.status === "idle" ? current : { status: "idle" }));
   }, []);

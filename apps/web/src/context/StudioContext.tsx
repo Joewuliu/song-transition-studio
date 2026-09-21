@@ -14,8 +14,8 @@ import type {
   PitchClass,
   TempoCompatibility,
   TrackAnalysis,
+  TransitionChoice,
   TransitionSuggestion,
-  TransitionVariant,
 } from "@/lib/api";
 import {
   DEFAULT_MIX_SETTINGS,
@@ -76,10 +76,10 @@ interface StudioContextValue {
   suggestionState: TransitionSuggestionState;
   onFindTransitions: () => void;
   variantPreviewState: VariantPreviewState;
-  onPreviewVariant: (variant: TransitionVariant) => void;
-  /** Adopts the variant into the editable plan AND navigates to /editor —
+  onPreviewVariant: (variant: TransitionChoice) => void;
+  /** Adopts the choice into the editable plan AND navigates to /editor —
    * "Use in editor" is the only caller. */
-  onUseInEditor: (variant: TransitionVariant) => void;
+  onUseInEditor: (variant: TransitionChoice) => void;
   suggestionInfo: SuggestionInfo | null;
 
   canGenerate: boolean;
@@ -146,18 +146,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const suggestion = useTransitionSuggestion();
   const variantPreview = useVariantPreview();
 
-  // The suggestion whose variant was most recently adopted into the
+  // The suggestion + specific choice most recently adopted into the
   // editor — distinct from `suggestion.state`, which just tracks the
   // latest /transitions/suggest fetch (options can be fetched again
-  // without disturbing whatever was already adopted into the plan).
-  const [adoptedSuggestion, setAdoptedSuggestion] = useState<TransitionSuggestion | null>(
-    null,
-  );
+  // without disturbing whatever was already adopted into the plan). The
+  // outer suggestion carries tempo interpretation (shared by every
+  // choice); the choice itself carries the harmonic context specific to
+  // the anchors that were actually adopted.
+  const [adopted, setAdopted] = useState<{
+    suggestion: TransitionSuggestion;
+    choice: TransitionChoice;
+  } | null>(null);
 
-  // The single centralized place a TransitionVariant's plan is copied
-  // into the editable TransitionPlan.
+  // The single centralized place a TransitionChoice's plan is copied into
+  // the editable TransitionPlan.
   const applyVariant = useCallback(
-    (adopted: TransitionSuggestion, variant: TransitionVariant) => {
+    (suggestion: TransitionSuggestion, variant: TransitionChoice) => {
       applyPlanUpdate(() => ({
         songAAnchor: variant.plan.songAAnchor,
         songBAnchor: variant.plan.songBAnchor,
@@ -171,7 +175,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         bassSwapWidthBeats: variant.plan.bassSwapWidthBeats,
       }));
       setIsSuggestionEdited(false);
-      setAdoptedSuggestion(adopted);
+      setAdopted({ suggestion, choice: variant });
       // The editor's own preview system now owns this plan — clear the
       // option-preview player so it doesn't linger as if it still
       // represented a live, up-to-date view of the (now editable) plan.
@@ -181,7 +185,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   );
 
   const onUseInEditor = useCallback(
-    (variant: TransitionVariant) => {
+    (variant: TransitionChoice) => {
       if (suggestion.state.status !== "success") return;
       applyVariant(suggestion.state.suggestion, variant);
       router.push("/editor");
@@ -190,7 +194,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   );
 
   const onPreviewVariant = useCallback(
-    (variant: TransitionVariant) => {
+    (variant: TransitionChoice) => {
       if (!songAFile || !songAAnalysis || !songBFile || !songBAnalysis) return;
       variantPreview.previewVariant({
         variant,
@@ -209,7 +213,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const clearSuggestion = useCallback(() => {
     suggestion.clear();
     variantPreview.reset();
-    setAdoptedSuggestion(null);
+    setAdopted(null);
     setIsSuggestionEdited(false);
   }, [suggestion, variantPreview]);
 
@@ -447,23 +451,25 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     });
   }, [canGenerate, preview, songAFile, songAAnalysis, songBFile, songBAnalysis, transitionPlan]);
 
-  // Reflects whichever suggestion the CURRENT editable plan was actually
-  // adopted from — not necessarily the latest /transitions/suggest fetch,
-  // since options can be re-fetched without disturbing an already-adopted
-  // plan (see applyVariant/adoptedSuggestion above).
+  // Reflects whichever suggestion/choice the CURRENT editable plan was
+  // actually adopted from — not necessarily the latest /transitions/
+  // suggest fetch, since options can be re-fetched without disturbing an
+  // already-adopted plan (see applyVariant/adopted above). Tempo
+  // interpretation comes from the outer suggestion (shared by every
+  // choice); harmonic context comes from the specific choice adopted.
   const suggestionInfo: SuggestionInfo | null =
-    adoptedSuggestion && songBAnalysis
+    adopted && songBAnalysis
       ? {
-          tempoCompatibility: adoptedSuggestion.tempoCompatibility,
-          usedTempoNormalization: adoptedSuggestion.usedTempoNormalization,
+          tempoCompatibility: adopted.suggestion.tempoCompatibility,
+          usedTempoNormalization: adopted.suggestion.usedTempoNormalization,
           songBRawBpm: songBAnalysis.tempoBpm,
-          effectiveSongBBpm: adoptedSuggestion.effectiveSongBBpm,
+          effectiveSongBBpm: adopted.suggestion.effectiveSongBBpm,
           isEdited: isSuggestionEdited,
-          harmonicCompatibility: adoptedSuggestion.harmonicCompatibility,
-          songALocalKey: adoptedSuggestion.songALocalKey,
-          songALocalMode: adoptedSuggestion.songALocalMode,
-          songBLocalKey: adoptedSuggestion.songBLocalKey,
-          songBLocalMode: adoptedSuggestion.songBLocalMode,
+          harmonicCompatibility: adopted.choice.harmonicCompatibility,
+          songALocalKey: adopted.choice.songALocalKey,
+          songALocalMode: adopted.choice.songALocalMode,
+          songBLocalKey: adopted.choice.songBLocalKey,
+          songBLocalMode: adopted.choice.songBLocalMode,
         }
       : null;
 

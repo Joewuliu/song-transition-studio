@@ -37,8 +37,13 @@ STRUCTURE_CONTEXT_BEATS = 8
 LOCAL_KEY_CONTEXT_BEATS = 4
 
 # Cap on how many ranked candidates are returned per role — small
-# shortlists, not the full per-frame feature data.
-MAX_CANDIDATES_PER_ROLE = 10
+# shortlists, not the full per-frame feature data. Raised from M6/M7's 10
+# for M12: the planner now searches PAIRS of (Song A exit, Song B entry)
+# candidates jointly (see services/transition_planner.py), and a wider
+# pool per role gives that search more genuinely distinct musical material
+# to choose from. 24x24 = 576 pairs worst case — still trivial to score
+# in full (see the planner's own module docstring for the bound).
+MAX_CANDIDATES_PER_ROLE = 24
 
 # Track-position eligibility windows (fraction of duration) for each role.
 # Position is only ONE scoring input (see _rank_candidates); these ranges
@@ -416,6 +421,7 @@ def _extract_candidates(
     local_keys: list[str | None] = [None] * n_beats
     local_modes: list[str | None] = [None] * n_beats
     local_key_confidences = np.zeros(n_beats)
+    local_timbres: list[list[float] | None] = [None] * n_beats
 
     for i in range(n_beats):
         frame = beat_frames[i]
@@ -449,6 +455,7 @@ def _extract_candidates(
         local_keys[i], local_modes[i], local_key_confidences[i] = _local_key_at(
             chroma, beat_frames, i, n_beats
         )
+        local_timbres[i] = _local_timbre_at(mfcc, beat_frames, i, n_beats)
 
     energy_change = np.abs(energy_after - energy_before)
     positions = np.asarray(beats) / duration_seconds
@@ -464,6 +471,7 @@ def _extract_candidates(
         local_keys,
         local_modes,
         local_key_confidences,
+        local_timbres,
         position_range=SONG_A_EXIT_POSITION_RANGE,
         preferred_position=SONG_A_EXIT_PREFERRED_POSITION,
     )
@@ -478,6 +486,7 @@ def _extract_candidates(
         local_keys,
         local_modes,
         local_key_confidences,
+        local_timbres,
         position_range=SONG_B_ENTRY_POSITION_RANGE,
         preferred_position=SONG_B_ENTRY_PREFERRED_POSITION,
     )
@@ -524,12 +533,38 @@ def _local_key_at(
     `i` — a compact (key, mode, confidence) summary rather than returning
     any chroma data itself, since the frontend never needs a full
     chromagram and this stays trivially small/serializable."""
+    local_chroma_mean = _local_context_mean(chroma, beat_frames, i, n_beats)
+    return _estimate_key(local_chroma_mean)
+
+
+def _local_timbre_at(
+    mfcc: np.ndarray,
+    beat_frames: np.ndarray,
+    i: int,
+    n_beats: int,
+) -> list[float]:
+    """A compact local MFCC summary (mean of the 13 coefficients) over the
+    same LOCAL_KEY_CONTEXT_BEATS window as _local_key_at, used for M12's
+    cross-track timbral/spectral compatibility term (see
+    services/transition_planner.py). MFCC describes broad spectral/timbral
+    character (roughly: instrumentation and tonal texture) — a distinct
+    signal from chroma's pitch-class content, so this is never derived
+    from local_key_at's result."""
+    local_mfcc_mean = _local_context_mean(mfcc, beat_frames, i, n_beats)
+    return [round(float(value), 4) for value in local_mfcc_mean]
+
+
+def _local_context_mean(
+    matrix: np.ndarray,
+    beat_frames: np.ndarray,
+    i: int,
+    n_beats: int,
+) -> np.ndarray:
     before_beat = max(0, i - LOCAL_KEY_CONTEXT_BEATS)
     after_beat = min(n_beats - 1, i + LOCAL_KEY_CONTEXT_BEATS)
     start_frame = beat_frames[before_beat]
     end_frame = max(beat_frames[after_beat], start_frame + 1)
-    local_chroma_mean = _mean_column(chroma, start_frame, end_frame)
-    return _estimate_key(local_chroma_mean)
+    return _mean_column(matrix, start_frame, end_frame)
 
 
 def _mean_column(matrix: np.ndarray, start_frame: int, end_frame: int) -> np.ndarray:
@@ -561,6 +596,7 @@ def _rank_candidates(
     local_keys: list[str | None],
     local_modes: list[str | None],
     local_key_confidences: np.ndarray,
+    local_timbres: list[list[float] | None],
     *,
     position_range: tuple[float, float],
     preferred_position: float,
@@ -600,6 +636,7 @@ def _rank_candidates(
                 local_key=local_keys[i],
                 local_mode=local_modes[i],
                 local_key_confidence=round(float(local_key_confidences[i]), 4),
+                local_timbre=local_timbres[i],
             )
         )
     return candidates

@@ -3,21 +3,22 @@
 import { useEffect, useState } from "react";
 import type { TransitionSuggestionState } from "@/hooks/useTransitionSuggestion";
 import type { VariantPreviewState } from "@/hooks/useVariantPreview";
-import type { TransitionVariant } from "@/lib/api";
+import type { TransitionChoice } from "@/lib/api";
 
 interface TransitionOptionsPanelProps {
   suggestionState: TransitionSuggestionState;
   onFindTransitions: () => void;
   variantPreviewState: VariantPreviewState;
-  onPreviewVariant: (variant: TransitionVariant) => void;
-  onUseInEditor: (variant: TransitionVariant) => void;
+  onPreviewVariant: (variant: TransitionChoice) => void;
+  onUseInEditor: (variant: TransitionChoice) => void;
 }
 
 /**
- * Surfaces the M9 transition options (Smooth Blend / Bass Swap / Quick
- * Mix) once both tracks are analyzed. These are immutable suggestions —
+ * Surfaces the M12 transition options — up to three distinct, ready-to-
+ * adopt anchor-pair choices (see the backend's suggest_transition_choices)
+ * once both tracks are analyzed. These are immutable suggestions —
  * auditioning one via Preview never touches the editable TransitionPlan;
- * only "Use in editor" does that (see page.tsx's applyVariant).
+ * only "Use in editor" does that (see StudioContext's applyVariant).
  */
 export function TransitionOptionsPanel({
   suggestionState,
@@ -52,7 +53,7 @@ export function TransitionOptionsPanel({
             Transition options
           </h3>
           <div className="flex flex-col gap-2">
-            {suggestionState.suggestion.variants.map((variant) => (
+            {suggestionState.suggestion.choices.map((variant) => (
               <VariantOption
                 key={variant.id}
                 variant={variant}
@@ -76,7 +77,7 @@ function VariantOption({
   onPreview,
   onUseInEditor,
 }: {
-  variant: TransitionVariant;
+  variant: TransitionChoice;
   previewState: VariantPreviewState;
   isAnyVariantRendering: boolean;
   onPreview: () => void;
@@ -89,7 +90,7 @@ function VariantOption({
     <div className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
-          {variant.name}
+          {variant.label}
         </span>
         <span className="shrink-0 text-xs text-zinc-400">
           {variant.plan.transitionBeats} beats
@@ -102,7 +103,7 @@ function VariantOption({
           type="button"
           onClick={onPreview}
           disabled={isAnyVariantRendering}
-          aria-label={`Preview ${variant.name}`}
+          aria-label={`Preview ${variant.label}`}
           className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:border-zinc-400 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
         >
           {isThisRendering ? "Loading preview…" : "Preview"}
@@ -110,7 +111,7 @@ function VariantOption({
         <button
           type="button"
           onClick={onUseInEditor}
-          aria-label={`Use ${variant.name} in editor`}
+          aria-label={`Use ${variant.label} in editor`}
           className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
         >
           Use in editor
@@ -124,7 +125,7 @@ function VariantOption({
         <VariantAudioPlayer
           key={previewState.generation}
           file={previewState.file}
-          label={`Previewing: ${variant.name}`}
+          label={`Previewing: ${variant.label}`}
         />
       )}
     </div>

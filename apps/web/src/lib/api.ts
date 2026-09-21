@@ -64,6 +64,10 @@ export interface TransitionCandidate {
   localKey: PitchClass | null;
   localMode: MusicalMode | null;
   localKeyConfidence: number;
+  /** A compact local MFCC summary used by the backend's pairwise planner
+   * for timbral/spectral compatibility; the frontend never reads this
+   * directly, only round-trips it back on /transitions/suggest requests. */
+  localTimbre: number[] | null;
 }
 
 export interface TrackAnalysis {
@@ -91,6 +95,7 @@ interface TransitionCandidateResponse {
   local_key: PitchClass | null;
   local_mode: MusicalMode | null;
   local_key_confidence: number;
+  local_timbre: number[] | null;
 }
 
 interface TrackAnalysisResponse {
@@ -164,6 +169,7 @@ function candidateFromResponse(
     localKey: candidate.local_key,
     localMode: candidate.local_mode,
     localKeyConfidence: candidate.local_key_confidence,
+    localTimbre: candidate.local_timbre,
   };
 }
 
@@ -181,6 +187,7 @@ function candidateToRequestBody(
     local_key: candidate.localKey,
     local_mode: candidate.localMode,
     local_key_confidence: candidate.localKeyConfidence,
+    local_timbre: candidate.localTimbre,
   };
 }
 
@@ -317,40 +324,46 @@ export interface SuggestedTransitionPlan {
   bassSwapWidthBeats: BassSwapWidthBeats;
 }
 
-/** A stable, deterministic identifier for one of the M9 transition
- * variants — see the backend's build_transition_variants. */
-export type TransitionVariantId = "smooth" | "bass_swap" | "quick";
+/** A stable, deterministic, rank-based identifier for one of the M12
+ * transition choices ("1" = the best-scoring pair) — see the backend's
+ * suggest_transition_choices. Not a fixed set of named techniques (that
+ * was the pre-M12 model); choices differ in WHICH anchors they use. */
+export type TransitionChoiceId = string;
 
 /**
- * One named, deterministic way to perform the SAME base transition (same
- * anchors/tempo interpretation as TransitionSuggestion.plan) — only
- * `plan`'s presentation fields (length/style/bass-swap window) differ
- * between variants. `name`/`description` are presentation-only; every
- * editable value lives in `plan`, never duplicated into metadata.
+ * One distinct, ready-to-adopt Song A exit / Song B entry anchor PAIR the
+ * backend judged compatible — choices differ in their anchors, not merely
+ * in presentation. `label`/`description` are neutral, presentation-only
+ * copy; every editable value lives in `plan`, never duplicated into
+ * metadata. `compatibility` and `harmonicCompatibility` are both in
+ * [0, 1]: deterministic feature-agreement scores, not a claim about how
+ * the transition will actually sound — auditioning via Preview is what
+ * that's for.
  */
-export interface TransitionVariant {
-  id: TransitionVariantId;
-  name: string;
+export interface TransitionChoice {
+  id: TransitionChoiceId;
+  label: string;
   description: string;
   plan: SuggestedTransitionPlan;
-}
-
-export interface TransitionSuggestion {
-  plan: SuggestedTransitionPlan;
-  variants: TransitionVariant[];
-  effectiveSongBBpm: number;
-  tempoCompatibility: TempoCompatibility;
-  usedTempoNormalization: boolean;
-  songAAnchorSource: AnchorSource;
-  songBAnchorSource: AnchorSource;
-  /** Local harmonic context around the *selected* anchors specifically —
-   * not the tracks' global estimatedKey — plus the deterministic
-   * compatibility score used to help choose this anchor pair. */
+  compatibility: number;
+  /** Local harmonic context around THIS choice's specific anchors — not
+   * the tracks' global estimatedKey. */
   harmonicCompatibility: number;
   songALocalKey: PitchClass | null;
   songALocalMode: MusicalMode | null;
   songBLocalKey: PitchClass | null;
   songBLocalMode: MusicalMode | null;
+}
+
+export interface TransitionSuggestion {
+  /** Up to three distinct choices, ranked best-first — choices[0] is the
+   * single best pairing found. */
+  choices: TransitionChoice[];
+  effectiveSongBBpm: number;
+  tempoCompatibility: TempoCompatibility;
+  usedTempoNormalization: boolean;
+  songAAnchorSource: AnchorSource;
+  songBAnchorSource: AnchorSource;
 }
 
 interface SuggestedTransitionPlanResponse {
@@ -366,26 +379,26 @@ interface SuggestedTransitionPlanResponse {
   bass_swap_width_beats: BassSwapWidthBeats;
 }
 
-interface TransitionVariantResponse {
-  id: TransitionVariantId;
-  name: string;
+interface TransitionChoiceResponse {
+  id: TransitionChoiceId;
+  label: string;
   description: string;
   plan: SuggestedTransitionPlanResponse;
-}
-
-interface TransitionSuggestResponseBody {
-  plan: SuggestedTransitionPlanResponse;
-  variants: TransitionVariantResponse[];
-  effective_song_b_bpm: number;
-  tempo_compatibility: TempoCompatibility;
-  used_tempo_normalization: boolean;
-  song_a_anchor_source: AnchorSource;
-  song_b_anchor_source: AnchorSource;
+  compatibility: number;
   harmonic_compatibility: number;
   song_a_local_key: PitchClass | null;
   song_a_local_mode: MusicalMode | null;
   song_b_local_key: PitchClass | null;
   song_b_local_mode: MusicalMode | null;
+}
+
+interface TransitionSuggestResponseBody {
+  choices: TransitionChoiceResponse[];
+  effective_song_b_bpm: number;
+  tempo_compatibility: TempoCompatibility;
+  used_tempo_normalization: boolean;
+  song_a_anchor_source: AnchorSource;
+  song_b_anchor_source: AnchorSource;
 }
 
 function suggestedPlanFromResponse(
@@ -456,23 +469,23 @@ export async function suggestTransition(
   const data = (await response.json()) as TransitionSuggestResponseBody;
 
   return {
-    plan: suggestedPlanFromResponse(data.plan),
-    variants: data.variants.map((variant) => ({
-      id: variant.id,
-      name: variant.name,
-      description: variant.description,
-      plan: suggestedPlanFromResponse(variant.plan),
+    choices: data.choices.map((choice) => ({
+      id: choice.id,
+      label: choice.label,
+      description: choice.description,
+      plan: suggestedPlanFromResponse(choice.plan),
+      compatibility: choice.compatibility,
+      harmonicCompatibility: choice.harmonic_compatibility,
+      songALocalKey: choice.song_a_local_key,
+      songALocalMode: choice.song_a_local_mode,
+      songBLocalKey: choice.song_b_local_key,
+      songBLocalMode: choice.song_b_local_mode,
     })),
     effectiveSongBBpm: data.effective_song_b_bpm,
     tempoCompatibility: data.tempo_compatibility,
     usedTempoNormalization: data.used_tempo_normalization,
     songAAnchorSource: data.song_a_anchor_source,
     songBAnchorSource: data.song_b_anchor_source,
-    harmonicCompatibility: data.harmonic_compatibility,
-    songALocalKey: data.song_a_local_key,
-    songALocalMode: data.song_a_local_mode,
-    songBLocalKey: data.song_b_local_key,
-    songBLocalMode: data.song_b_local_mode,
   };
 }
 
